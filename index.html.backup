@@ -1,0 +1,2369 @@
+<!doctype html>
+<html lang="zh-TW">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HSK 生詞卡學習系統</title>
+  <script>
+    // Mock SDK for standalone use
+    window.dataSdk = {
+      async init(handler) {
+        window._dataHandler = handler;
+        const savedData = localStorage.getItem('hsk_words');
+        const words = savedData ? JSON.parse(savedData) : [];
+        setTimeout(() => handler.onDataChanged(words), 100);
+        return { isOk: true };
+      },
+      async create(wordData) {
+        const savedData = localStorage.getItem('hsk_words');
+        const words = savedData ? JSON.parse(savedData) : [];
+        words.push(wordData);
+        localStorage.setItem('hsk_words', JSON.stringify(words));
+
+        const handler = window._dataHandler;
+        if (handler) {
+          setTimeout(() => handler.onDataChanged(words), 100);
+        }
+        return { isOk: true };
+      },
+      async delete(word) {
+        const savedData = localStorage.getItem('hsk_words');
+        const words = savedData ? JSON.parse(savedData) : [];
+        const filtered = words.filter(w => w.id !== word.id);
+        localStorage.setItem('hsk_words', JSON.stringify(filtered));
+
+        const handler = window._dataHandler;
+        if (handler) {
+          setTimeout(() => handler.onDataChanged(filtered), 100);
+        }
+        return { isOk: true };
+      }
+    };
+
+    window.elementSdk = {
+      config: {},
+      async init(options) {
+        this.config = options.defaultConfig;
+        this._onConfigChange = options.onConfigChange;
+        return { isOk: true };
+      },
+      setConfig(newConfig) {
+        Object.assign(this.config, newConfig);
+        if (this._onConfigChange) {
+          this._onConfigChange(this.config);
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      box-sizing: border-box;
+    }
+
+    .card-flip {
+      perspective: 1000px;
+    }
+
+    .card-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.6s;
+      transform-style: preserve-3d;
+    }
+
+    .card-flip.flipped .card-inner {
+      transform: rotateY(180deg);
+    }
+
+    .card-front, .card-back {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      border-radius: 0.5rem;
+    }
+
+    .card-back {
+      transform: rotateY(180deg);
+    }
+
+    .fade-in {
+      animation: fadeIn 0.3s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .sync-indicator {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .matching-card {
+      transition: all 0.3s ease;
+    }
+
+    .matching-card:hover:not(.matched) {
+      transform: scale(1.05);
+    }
+
+    .matching-card.flipped .card-inner {
+      transform: rotateY(180deg);
+    }
+
+    .matching-card.matched {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .shake {
+      animation: shake 0.5s;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-10px); }
+      75% { transform: translateX(10px); }
+    }
+
+    .choice-btn {
+      transition: all 0.2s;
+    }
+
+    .choice-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+
+    .choice-btn.correct {
+      animation: correctPulse 0.6s;
+    }
+
+    .choice-btn.wrong {
+      animation: wrongShake 0.5s;
+    }
+
+    @keyframes correctPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    @keyframes wrongShake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-8px); }
+      75% { transform: translateX(8px); }
+    }
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+ </head>
+ <body class="w-full min-h-full" style="margin: 0; padding: 0;">
+  <div id="app" class="w-full min-h-full"></div>
+  <script>
+    const defaultConfig = {
+      site_title: "HSK 生詞卡學習系統",
+      search_placeholder: "搜尋生詞...",
+      background_color: "#f0f4f8",
+      card_color: "#ffffff",
+      primary_color: "#3b82f6",
+      text_color: "#1f2937",
+      accent_color: "#10b981",
+      font_family: "system-ui",
+      font_size: 16
+    };
+
+    let allWords = [];
+    let currentView = 'home';
+    let selectedLevel = null;
+    let studyMode = null;
+    let currentCardIndex = 0;
+    let studyWords = [];
+    let testScore = 0;
+    let testAnswers = [];
+    let isLoading = false;
+    let customWordTypes = ['名詞', '動詞', '形容詞', '副詞', '代詞', '數詞', '量詞', '連詞', '介詞', '助詞', '嘆詞', '擬聲詞', '成語', '慣用語'];
+    let showWordTypeModal = false;
+    let showLevelModal = false;
+    let customLevels = [
+      { id: '1', label: 'HSK 1', value: 1 },
+      { id: '2', label: 'HSK 2', value: 2 },
+      { id: '3', label: 'HSK 3', value: 3 },
+      { id: '4', label: 'HSK 4', value: 4 },
+      { id: '5', label: 'HSK 5', value: 5 },
+      { id: '6', label: 'HSK 6', value: 6 },
+      { id: '7-9', label: 'HSK 7-9', value: 7 }
+    ];
+    let lastSyncTime = null;
+    let gameOptions = [];
+    let gameTimeLeft = 60;
+    let gameTimer = null;
+    let matchingPairs = [];
+    let selectedCards = [];
+    let matchedPairs = [];
+    let gameStartTime = null;
+
+    // 簡繁轉換對照表
+    const conversionMap = {
+      '学': '學', '习': '習', '国': '國', '这': '這', '那': '那',
+      '里': '裡', '说': '說', '话': '話', '吃': '吃', '饭': '飯',
+      '喝': '喝', '茶': '茶', '买': '買', '东': '東', '西': '西',
+      '门': '門', '开': '開', '关': '關', '书': '書', '看': '看',
+      '读': '讀', '写': '寫', '听': '聽', '会': '會', '见': '見',
+      '时': '時', '间': '間', '天': '天', '气': '氣', '候': '候',
+      '热': '熱', '冷': '冷', '雨': '雨', '雪': '雪', '风': '風',
+      '电': '電', '视': '視', '脑': '腦', '网': '網',
+      '络': '絡', '际': '際', '业': '業', '务': '務', '员': '員',
+      '师': '師', '医': '醫', '院': '院', '药': '藥', '店': '店',
+      '场': '場', '市': '市', '银': '銀', '行': '行', '钱': '錢',
+      '块': '塊', '毛': '毛', '万': '萬', '亿': '億', '元': '元',
+      '号': '號', '码': '碼', '机': '機', '车': '車', '站': '站',
+      '火': '火', '汽': '汽', '飞': '飛', '船': '船', '路': '路',
+      '桥': '橋', '楼': '樓', '层': '層', '房': '房',
+      '厅': '廳', '厨': '廚', '卫': '衛', '生': '生',
+      '园': '園', '馆': '館', '办': '辦', '公': '公', '室': '室',
+      '厂': '廠', '区': '區', '县': '縣', '镇': '鎮', '村': '村',
+      '省': '省', '街': '街', '道': '道',
+      '栋': '棟', '单': '單',
+      '东': '東', '南': '南', '西': '西', '北': '北', '中': '中',
+      '前': '前', '后': '後', '左': '左', '右': '右', '上': '上',
+      '下': '下', '大': '大', '小': '小', '多': '多', '少': '少',
+      '长': '長', '短': '短', '高': '高', '低': '低', '新': '新',
+      '旧': '舊', '好': '好', '坏': '壞', '对': '對', '错': '錯',
+      '快': '快', '慢': '慢', '远': '遠', '近': '近', '早': '早',
+      '晚': '晚', '来': '來', '去': '去', '回': '回', '进': '進',
+      '出': '出', '到': '到', '给': '給', '让': '讓', '请': '請',
+      '谢': '謝', '起': '起', '没': '沒',
+      '系': '係', '问': '問', '题': '題', '帮': '幫',
+      '助': '助', '忙': '忙', '认': '認', '识': '識', '诉': '訴',
+      '爱': '愛', '欢': '歡', '喜': '喜', '讨': '討', '厌': '厭',
+      '兴': '興', '奋': '奮', '担': '擔', '心': '心', '难': '難',
+      '过': '過', '觉': '覺', '得': '得', '应': '應', '该': '該',
+      '能': '能', '够': '夠', '想': '想', '要': '要', '愿': '願',
+      '意': '意', '希': '希', '望': '望', '怕': '怕', '怪': '怪',
+      '真': '真', '假': '假', '梦': '夢', '醒': '醒', '睡': '睡',
+      '累': '累', '饿': '餓', '渴': '渴', '病': '病',
+      '疼': '疼', '痛': '痛', '舒': '舒', '服': '服', '健': '健',
+      '康': '康', '岁': '歲', '年': '年', '月': '月', '日': '日',
+      '星': '星', '期': '期', '礼': '禮', '拜': '拜', '周': '週',
+      '点': '點', '钟': '鐘', '分': '分', '秒': '秒', '刻': '刻',
+      '半': '半', '今': '今', '明': '明', '昨': '昨',
+      '现': '現', '在': '在', '将': '將', '刚': '剛', '才': '才',
+      '已': '已', '经': '經', '还': '還', '正': '正', '春': '春',
+      '夏': '夏', '秋': '秋', '冬': '冬', '季': '季', '节': '節',
+      '温': '溫', '度': '度', '湿': '濕', '干': '乾', '净': '淨',
+      '脏': '髒', '亮': '亮', '暗': '暗', '响': '響', '静': '靜',
+      '闹': '鬧', '轻': '輕', '重': '重', '粗': '粗', '细': '細',
+      '厚': '厚', '薄': '薄', '宽': '寬', '窄': '窄', '深': '深',
+      '浅': '淺', '满': '滿', '空': '空', '缺': '缺',
+      '丰': '豐', '富': '富', '贫': '貧', '穷': '窮', '贵': '貴',
+      '便': '便', '宜': '宜', '值': '值', '价': '價', '格': '格',
+      '费': '費', '用': '用', '花': '花', '赚': '賺', '省': '省',
+      '约': '約', '浪': '浪', '赔': '賠',
+      '输': '輸', '赢': '贏', '算': '算', '数': '數', '计': '計',
+      '总': '總', '共': '共', '平': '平', '均': '均', '加': '加',
+      '减': '減', '乘': '乘', '除': '除', '等': '等', '于': '於',
+      '倍': '倍', '双': '雙', '第': '第',
+      '次': '次', '遍': '遍', '趟': '趟', '顿': '頓',
+      '番': '番', '届': '屆', '批': '批',
+      '组': '組', '队': '隊', '群': '群', '伙': '夥',
+      '个': '個', '位': '位', '名': '名', '条': '條', '张': '張',
+      '只': '隻', '支': '支', '把': '把', '件': '件', '套': '套',
+      '副': '副', '份': '份', '本': '本',
+      '册': '冊', '页': '頁', '篇': '篇', '章': '章',
+      '段': '段', '句': '句', '词': '詞', '字': '字', '笔': '筆',
+      '画': '畫', '声': '聲', '音': '音', '调': '調', '级': '級',
+      '类': '類', '种': '種', '样': '樣', '式': '式', '型': '型',
+      '款': '款', '品': '品', '牌': '牌', '质': '質', '量': '量',
+      '额': '額', '率': '率', '比': '比', '例': '例',
+      '围': '圍', '范': '範', '限': '限', '内': '內',
+      '外': '外', '央': '央', '边': '邊',
+      '侧': '側', '旁': '旁', '角': '角', '处': '處', '所': '所',
+      '向': '向', '方': '方', '面': '面', '部': '部',
+      '体': '體', '身': '身', '头': '頭', '发': '髮',
+      '眼': '眼', '睛': '睛', '耳': '耳', '朵': '朵', '鼻': '鼻',
+      '嘴': '嘴', '唇': '唇', '齿': '齒', '牙': '牙', '舌': '舌',
+      '脸': '臉', '颊': '頰', '眉': '眉',
+      '须': '鬚', '胡': '胡', '颈': '頸', '脖': '脖',
+      '肩': '肩', '膀': '膀', '胸': '胸', '背': '背', '腰': '腰',
+      '腹': '腹', '肚': '肚', '臀': '臀', '腿': '腿', '膝': '膝',
+      '脚': '腳', '趾': '趾', '臂': '臂', '肘': '肘', '腕': '腕',
+      '掌': '掌', '拳': '拳', '指': '指', '甲': '甲', '皮': '皮',
+      '肤': '膚', '肉': '肉', '骨': '骨', '筋': '筋', '血': '血',
+      '汗': '汗', '泪': '淚', '涕': '涕', '痰': '痰', '尿': '尿',
+      '粪': '糞', '屁': '屁', '息': '息',
+      '呼': '呼', '吸': '吸', '吐': '吐', '咳': '咳', '嗽': '嗽',
+      '喷': '噴', '嚏': '嚏', '打': '打', '哈': '哈', '欠': '欠',
+      '叹': '嘆', '哭': '哭', '笑': '笑', '唱': '唱', '喊': '喊',
+      '叫': '叫', '骂': '罵', '吵': '吵', '讲': '講',
+      '谈': '談', '聊': '聊', '议': '議', '论': '論', '辩': '辯',
+      '争': '爭', '架': '架', '仗': '仗',
+      '战': '戰', '斗': '鬥', '胜': '勝', '败': '敗', '负': '負',
+      '赛': '賽', '敌': '敵', '友': '友', '伴': '伴', '侣': '侶',
+      '夫': '夫', '妻': '妻', '妇': '婦', '婚': '婚',
+      '姻': '姻', '恋': '戀', '亲': '親', '吻': '吻',
+      '抱': '抱', '搂': '摟', '拥': '擁', '握': '握', '牵': '牽',
+      '拉': '拉', '推': '推', '拖': '拖', '拽': '拽', '扔': '扔',
+      '丢': '丟', '抛': '拋', '撒': '撒', '洒': '灑', '倒': '倒',
+      '注': '注', '灌': '灌', '冲': '沖', '洗': '洗', '刷': '刷',
+      '擦': '擦', '抹': '抹', '涂': '塗', '描': '描',
+      '绘': '繪', '刻': '刻', '印': '印', '拓': '拓',
+      '盖': '蓋', '签': '簽', '章': '章', '戳': '戳',
+      '按': '按', '压': '壓', '挤': '擠', '捏': '捏', '掐': '掐',
+      '拧': '擰', '扭': '扭', '转': '轉', '摇': '搖', '晃': '晃',
+      '摆': '擺', '动': '動', '摸': '摸', '抚': '撫', '摩': '摩',
+      '揉': '揉', '搓': '搓', '挠': '撓', '抓': '抓', '挖': '挖',
+      '掏': '掏', '捞': '撈', '捡': '撿', '拾': '拾', '捧': '捧',
+      '托': '託', '举': '舉', '抬': '抬', '提': '提', '拎': '拎',
+      '搬': '搬', '扛': '扛', '抗': '抗', '挑': '挑',
+      '驮': '馱', '载': '載', '运': '運', '送': '送',
+      '递': '遞', '传': '傳', '接': '接', '收': '收', '取': '取',
+      '领': '領', '换': '換', '交': '交', '付': '付',
+      '借': '借', '贷': '貸', '欠': '欠', '债': '債', '租': '租',
+      '赁': '賃', '卖': '賣', '购': '購', '订': '訂', '预': '預',
+      '定': '定', '改': '改', '变': '變', '化': '化',
+      '代': '代', '替': '替', '补': '補', '充': '充',
+      '填': '填', '增': '增', '添': '添', '削': '削',
+      '降': '降', '升': '升', '涨': '漲', '跌': '跌',
+      '落': '落', '跳': '跳', '蹦': '蹦', '踢': '踢', '踩': '踩',
+      '踏': '踏', '跨': '跨', '越': '越', '迈': '邁',
+      '跑': '跑', '奔': '奔', '追': '追', '赶': '趕', '逃': '逃',
+      '躲': '躲', '藏': '藏', '避': '避', '闪': '閃',
+      '退': '退', '返': '返', '离': '離', '别': '別', '走': '走',
+      '步': '步', '游': '遊', '逛': '逛', '散': '散',
+      '溜': '溜', '达': '達', '访': '訪', '探': '探',
+      '迎': '迎', '待': '待', '留': '留', '住': '住', '宿': '宿', '居': '居',
+      '迁': '遷', '移': '移', '站': '站', '立': '立',
+      '竖': '豎', '卧': '臥', '躺': '躺', '趴': '趴',
+      '跪': '跪', '蹲': '蹲', '坐': '坐', '靠': '靠', '倚': '倚',
+      '挂': '掛', '悬': '懸', '吊': '吊', '垂': '垂',
+      '绑': '綁', '扎': '紮', '捆': '捆', '缠': '纏', '绕': '繞',
+      '卷': '捲', '叠': '疊', '折': '折', '弯': '彎', '曲': '曲',
+      '直': '直', '顺': '順', '斜': '斜', '歪': '歪',
+      '圆': '圓', '尖': '尖', '钝': '鈍', '锐': '銳',
+      '利': '利', '滑': '滑', '涩': '澀', '糙': '糙',
+      '软': '軟', '硬': '硬', '松': '鬆', '紧': '緊', '实': '實',
+      '虚': '虛', '固': '固', '稳': '穩', '颤': '顫', '抖': '抖', '震': '震', '振': '振',
+      '止': '止', '停': '停', '歇': '歇',
+      '休': '休', '眠': '眠', '迷': '迷',
+      '糊': '糊', '晕': '暈', '昏': '昏', '沉': '沉',
+      '魇': '魘', '呓': '囈', '语': '語', '鼾': '鼾',
+      '磨': '磨', '游': '遊', '惊': '驚',
+      '吓': '嚇', '恐': '恐', '惧': '懼', '慌': '慌',
+      '急': '急', '紧': '緊', '迫': '迫', '弛': '弛', '懈': '懈',
+      '怠': '怠', '懒': '懶', '惰': '惰', '勤': '勤',
+      '努': '努', '力': '力', '劲': '勁', '拼': '拼', '搏': '搏',
+      '竞': '競', '抢': '搶', '夺': '奪', '占': '佔',
+      '据': '據', '守': '守', '防': '防', '护': '護',
+      '保': '保', '险': '險', '安': '安', '全': '全', '危': '危',
+      '灾': '災', '祸': '禍', '患': '患',
+      '故': '故', '障': '障', '疾': '疾',
+      '症': '症', '状': '狀', '况': '況', '伤': '傷', '损': '損',
+      '害': '害', '毒': '毒', '治': '治', '疗': '療',
+      '愈': '癒', '复': '復', '壮': '壯',
+      '强': '強', '弱': '弱', '衰': '衰',
+      '老': '老', '幼': '幼', '嫩': '嫩', '青': '青',
+      '迈': '邁', '轻': '輕', '龄': '齡', '寿': '壽', '命': '命',
+      '死': '死', '亡': '亡', '终': '終', '末': '末', '临': '臨',
+      '遗': '遺', '承': '承',
+      '继': '繼', '续': '續', '断': '斷', '绝': '絕', '灭': '滅',
+      '存': '存', '有': '有', '无': '無',
+      '乏': '乏', '欠': '欠',
+      '足': '足', '裕': '裕', '余': '餘',
+      '剩': '剩'
+    };
+
+    function convertToTraditional(text) {
+      let result = '';
+      for (let char of text) {
+        result += conversionMap[char] || char;
+      }
+      return result;
+    }
+
+    const dataHandler = {
+      onDataChanged(data) {
+        allWords = data.sort((a, b) => a.hsk_level - b.hsk_level || a.simplified.localeCompare(b.simplified));
+        lastSyncTime = new Date();
+        if (!isLoading && currentView !== 'add') {
+          renderApp();
+        } else if (currentView === 'add') {
+          const syncIndicators = document.querySelectorAll('.sync-indicator');
+          syncIndicators.forEach(indicator => {
+            const parent = indicator.parentElement;
+            if (parent) {
+              const timeSpan = parent.querySelector('.sync-time');
+              if (timeSpan) {
+                timeSpan.textContent = `最後同步：${formatSyncTime()}`;
+              }
+            }
+          });
+        }
+      }
+    };
+
+    async function onConfigChange(config) {
+      const baseSize = config.font_size || defaultConfig.font_size;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+
+      document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+      document.body.style.fontFamily = `${customFont}, ${baseFontStack}`;
+      document.body.style.fontSize = `${baseSize}px`;
+      document.body.style.color = config.text_color || defaultConfig.text_color;
+
+      renderApp();
+    }
+
+    async function initializeSDKs() {
+      const elementResult = await window.elementSdk.init({
+        defaultConfig,
+        onConfigChange,
+        mapToCapabilities: (config) => ({
+          recolorables: [
+            {
+              get: () => config.background_color || defaultConfig.background_color,
+              set: (value) => {
+                window.elementSdk.config.background_color = value;
+                window.elementSdk.setConfig({ background_color: value });
+              }
+            },
+            {
+              get: () => config.card_color || defaultConfig.card_color,
+              set: (value) => {
+                window.elementSdk.config.card_color = value;
+                window.elementSdk.setConfig({ card_color: value });
+              }
+            },
+            {
+              get: () => config.primary_color || defaultConfig.primary_color,
+              set: (value) => {
+                window.elementSdk.config.primary_color = value;
+                window.elementSdk.setConfig({ primary_color: value });
+              }
+            },
+            {
+              get: () => config.text_color || defaultConfig.text_color,
+              set: (value) => {
+                window.elementSdk.config.text_color = value;
+                window.elementSdk.setConfig({ text_color: value });
+              }
+            },
+            {
+              get: () => config.accent_color || defaultConfig.accent_color,
+              set: (value) => {
+                window.elementSdk.config.accent_color = value;
+                window.elementSdk.setConfig({ accent_color: value });
+              }
+            }
+          ],
+          borderables: [],
+          fontEditable: {
+            get: () => config.font_family || defaultConfig.font_family,
+            set: (value) => {
+              window.elementSdk.config.font_family = value;
+              window.elementSdk.setConfig({ font_family: value });
+            }
+          },
+          fontSizeable: {
+            get: () => config.font_size || defaultConfig.font_size,
+            set: (value) => {
+              window.elementSdk.config.font_size = value;
+              window.elementSdk.setConfig({ font_size: value });
+            }
+          }
+        }),
+        mapToEditPanelValues: (config) => new Map([
+          ["site_title", config.site_title || defaultConfig.site_title],
+          ["search_placeholder", config.search_placeholder || defaultConfig.search_placeholder]
+        ])
+      });
+
+      const dataResult = await window.dataSdk.init(dataHandler);
+
+      if (!dataResult.isOk) {
+        console.error("Failed to initialize Data SDK");
+      }
+    }
+
+    function getColors() {
+      const config = window.elementSdk?.config || defaultConfig;
+      return {
+        background: config.background_color || defaultConfig.background_color,
+        card: config.card_color || defaultConfig.card_color,
+        primary: config.primary_color || defaultConfig.primary_color,
+        text: config.text_color || defaultConfig.text_color,
+        accent: config.accent_color || defaultConfig.accent_color
+      };
+    }
+
+    function getFontSize() {
+      const config = window.elementSdk?.config || defaultConfig;
+      return config.font_size || defaultConfig.font_size;
+    }
+
+    function formatSyncTime() {
+      if (!lastSyncTime) return '尚未同步';
+      const now = new Date();
+      const diff = Math.floor((now - lastSyncTime) / 1000);
+
+      if (diff < 5) return '剛剛';
+      if (diff < 60) return `${diff} 秒前`;
+      if (diff < 3600) return `${Math.floor(diff / 60)} 分鐘前`;
+      return lastSyncTime.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function renderApp() {
+      const app = document.getElementById('app');
+      const colors = getColors();
+      const baseSize = getFontSize();
+      const config = window.elementSdk?.config || defaultConfig;
+
+      if (currentView === 'home') {
+        app.innerHTML = renderHome(colors, baseSize, config);
+      } else if (currentView === 'browse') {
+        app.innerHTML = renderBrowse(colors, baseSize, config);
+      } else if (currentView === 'add') {
+        app.innerHTML = renderAddWord(colors, baseSize, config);
+      } else if (currentView === 'study') {
+        app.innerHTML = renderStudy(colors, baseSize, config);
+      } else if (currentView === 'test') {
+        app.innerHTML = renderTest(colors, baseSize, config);
+      } else if (currentView === 'multiple-choice') {
+        app.innerHTML = renderMultipleChoice(colors, baseSize, config);
+      } else if (currentView === 'speed-challenge') {
+        app.innerHTML = renderSpeedChallenge(colors, baseSize, config);
+      } else if (currentView === 'matching') {
+        app.innerHTML = renderMatching(colors, baseSize, config);
+      } else if (currentView === 'listening') {
+        app.innerHTML = renderListening(colors, baseSize, config);
+      } else if (currentView === 'results') {
+        app.innerHTML = renderResults(colors, baseSize, config);
+      }
+
+      attachEventListeners();
+    }
+
+    function renderSyncIndicator(colors, baseSize) {
+      return `
+        <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background-color: ${colors.card}; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <div class="sync-indicator" style="width: 8px; height: 8px; background-color: ${colors.accent}; border-radius: 50%;"></div>
+          <div style="font-size: ${baseSize * 0.85}px; color: ${colors.text};">
+            <span style="font-weight: 600;">Canva Sheet 已連結</span>
+            <span class="sync-time" style="opacity: 0.6; margin-left: 0.5rem;">最後同步：${formatSyncTime()}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderHome(colors, baseSize, config) {
+      const levelCounts = Array(9).fill(0);
+      allWords.forEach(word => {
+        if (word.hsk_level >= 1 && word.hsk_level <= 9) {
+          levelCounts[word.hsk_level - 1]++;
+        }
+      });
+
+      return `
+        ${showLevelModal ? `
+          <div id="level-modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; padding: 1rem;">
+            <div style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; max-width: 600px; width: 100%; max-height: 80%; overflow-y: auto; box-shadow: 0 20px 25px rgba(0,0,0,0.3);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">管理等級選項</h2>
+                <button id="close-level-modal-btn" style="background-color: transparent; border: none; font-size: ${baseSize * 1.5}px; color: ${colors.text}; cursor: pointer; padding: 0.25rem; line-height: 1;">✕</button>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  新增等級選項
+                </label>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                  <input type="text" id="new-level-label" placeholder="等級名稱 (如: HSK 10)"
+                    style="flex: 1; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                  <input type="number" id="new-level-value" placeholder="等級數值" min="1" max="99"
+                    style="width: 120px; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                </div>
+                <button id="add-level-btn" style="width: 100%; padding: 0.75rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  新增等級
+                </button>
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <h3 style="font-size: ${baseSize * 1.1}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.75rem;">
+                  現有等級選項 (${customLevels.length})
+                </h3>
+              </div>
+
+              <div id="levels-list" style="display: grid; gap: 0.5rem;">
+                ${customLevels.map((level, index) => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background-color: ${colors.background}; border-radius: 0.5rem;">
+                    <div>
+                      <span style="font-size: ${baseSize}px; color: ${colors.text}; font-weight: 600;">${level.label}</span>
+                      <span style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.6; margin-left: 0.5rem;">(數值: ${level.value})</span>
+                    </div>
+                    <button class="delete-level-btn" data-index="${index}" style="background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ${baseSize * 0.85}px;">
+                      刪除
+                    </button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 1200px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+              <div style="text-align: center; flex: 1;">
+                <h1 style="font-size: ${baseSize * 2.5}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  ${(config && config.site_title) || defaultConfig.site_title}
+                </h1>
+                <p style="font-size: ${baseSize * 1.1}px; color: ${colors.text}; opacity: 0.7;">
+                  專業的 HSK 生詞學習平台
+                </p>
+              </div>
+              ${renderSyncIndicator(colors, baseSize)}
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 1.5rem; border-radius: 1rem; margin-bottom: 2rem; border-left: 4px solid ${colors.accent};">
+              <div style="display: flex; align-items: start; gap: 1rem;">
+                <div style="font-size: ${baseSize * 2}px;">📊</div>
+                <div style="flex: 1;">
+                  <h3 style="font-size: ${baseSize * 1.2}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                    Canva Sheet 雙向同步已啟用
+                  </h3>
+                  <p style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.8; margin-bottom: 0.75rem;">
+                    您的生詞資料會自動儲存到 Canva Sheet（試算表）。您可以：
+                  </p>
+                  <ul style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.8; list-style: none; padding: 0;">
+                    <li style="margin-bottom: 0.25rem;">✓ 在網站上新增/刪除生詞 → 自動同步到試算表</li>
+                    <li style="margin-bottom: 0.25rem;">✓ 在試算表中編輯生詞 → 自動更新到網站</li>
+                    <li style="margin-bottom: 0.25rem;">✓ 雙向即時同步，資料永不遺失</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 3rem;">
+              <div class="action-card" data-action="browse" style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s;">
+                <div style="font-size: ${baseSize * 2}px; margin-bottom: 1rem;">📚</div>
+                <h3 style="font-size: ${baseSize * 1.3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">瀏覽生詞</h3>
+                <p style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7;">查看和搜尋所有生詞</p>
+              </div>
+
+              <div class="action-card" data-action="add" style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s;">
+                <div style="font-size: ${baseSize * 2}px; margin-bottom: 1rem;">➕</div>
+                <h3 style="font-size: ${baseSize * 1.3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">新增生詞</h3>
+                <p style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7;">添加新的 HSK 生詞</p>
+              </div>
+
+              <div class="action-card" data-action="study" style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s;">
+                <div style="font-size: ${baseSize * 2}px; margin-bottom: 1rem;">✏️</div>
+                <h3 style="font-size: ${baseSize * 1.3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">訓練模式</h3>
+                <p style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7;">使用生詞卡練習記憶</p>
+              </div>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">HSK 等級統計</h2>
+                <button id="manage-levels-btn" style="padding: 0.5rem 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 0.9}px;">
+                  管理等級
+                </button>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 1rem;">
+                ${customLevels.map(level => {
+                  let count = 0;
+                  if (level.id === '7-9') {
+                    count = allWords.filter(w => w.hsk_level >= 7 && w.hsk_level <= 9).length;
+                  } else {
+                    count = allWords.filter(w => w.hsk_level === level.value).length;
+                  }
+                  return `
+                    <div style="text-align: center; padding: 1rem; background-color: ${colors.background}; border-radius: 0.5rem;">
+                      <div style="font-size: ${baseSize * 1.8}px; font-weight: bold; color: ${colors.primary};">${count}</div>
+                      <div style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.7; margin-top: 0.25rem;">${level.label}</div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderBrowse(colors, baseSize, config) {
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 1200px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+              <h1 style="font-size: ${baseSize * 2}px; font-weight: bold; color: ${colors.text};">瀏覽生詞</h1>
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                ${renderSyncIndicator(colors, baseSize)}
+                <button class="back-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  返回首頁
+                </button>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <input type="text" id="search-input" placeholder="${(config && config.search_placeholder) || defaultConfig.search_placeholder}"
+                style="width: 100%; padding: 1rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: ${colors.card}; color: ${colors.text};">
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap;">
+              <button class="level-filter" data-level="all" style="padding: 0.5rem 1rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 0.9}px;">
+                全部
+              </button>
+              ${customLevels.map(level => `
+                <button class="level-filter" data-level="${level.id}" style="padding: 0.5rem 1rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 0.9}px;">
+                  ${level.label}
+                </button>
+              `).join('')}
+            </div>
+
+            <div id="words-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem;">
+              ${renderWordCards(allWords, colors, baseSize)}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderWordCards(words, colors, baseSize) {
+      if (words.length === 0) {
+        return `<div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: ${colors.text}; opacity: 0.7; font-size: ${baseSize * 1.1}px;">尚無生詞資料</div>`;
+      }
+
+      return words.map(word => {
+        const meanings = word.thai_meanings ? word.thai_meanings.split('|').filter(m => m.trim()) : [];
+        const examples = word.example_sentences ? word.example_sentences.split('|').filter(e => e.trim()) : [];
+
+        return `
+          <div class="word-card" style="background-color: ${colors.card}; padding: 1.5rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
+              <div>
+                <div style="font-size: ${baseSize * 1.8}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.25rem;">
+                  ${word.simplified}
+                </div>
+                <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.6;">
+                  ${word.traditional}
+                </div>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <span style="background-color: ${colors.primary}; color: white; padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: ${baseSize * 0.8}px;">
+                  HSK ${word.hsk_level}
+                </span>
+                <button class="delete-word-btn" data-id="${word.id}" style="background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ${baseSize * 0.8}px;">
+                  刪除
+                </button>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 1rem;">
+              <div style="font-size: ${baseSize * 1.1}px; color: ${colors.primary}; margin-bottom: 0.5rem;">
+                ${word.pinyin}
+              </div>
+              <div style="font-size: ${baseSize * 0.85}px; color: ${colors.accent}; font-weight: 600;">
+                ${word.word_type}
+              </div>
+            </div>
+
+            ${meanings.length > 0 ? `
+              <div style="margin-bottom: 1rem;">
+                <div style="font-size: ${baseSize * 0.9}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  泰文翻譯：
+                </div>
+                ${meanings.map(m => `
+                  <div style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.8; margin-bottom: 0.25rem;">
+                    • ${m.trim()}
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+
+            ${examples.length > 0 ? `
+              <div>
+                <div style="font-size: ${baseSize * 0.9}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  例句：
+                </div>
+                ${examples.map(e => `
+                  <div style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.8; margin-bottom: 0.25rem; font-style: italic;">
+                    ${e.trim()}
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderAddWord(colors, baseSize, config) {
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          ${showWordTypeModal ? `
+            <div id="word-type-modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; padding: 1rem;">
+              <div style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; max-width: 600px; width: 100%; max-height: 80%; overflow-y: auto; box-shadow: 0 20px 25px rgba(0,0,0,0.3);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                  <h2 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">管理詞性</h2>
+                  <button id="close-modal-btn" style="background-color: transparent; border: none; font-size: ${baseSize * 1.5}px; color: ${colors.text}; cursor: pointer; padding: 0.25rem; line-height: 1;">✕</button>
+                </div>
+
+                <div style="margin-bottom: 1.5rem;">
+                  <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                    新增詞性
+                  </label>
+                  <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="new-word-type-input" placeholder="輸入新詞性"
+                      style="flex: 1; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                    <button id="add-word-type-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px; white-space: nowrap;">
+                      新增
+                    </button>
+                  </div>
+                </div>
+
+                <div style="margin-bottom: 1rem;">
+                  <h3 style="font-size: ${baseSize * 1.1}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.75rem;">
+                    現有詞性 (${customWordTypes.length})
+                  </h3>
+                </div>
+
+                <div id="word-types-list" style="display: grid; gap: 0.5rem;">
+                  ${customWordTypes.map((type, index) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background-color: ${colors.background}; border-radius: 0.5rem;">
+                      <span style="font-size: ${baseSize}px; color: ${colors.text};">${type}</span>
+                      <button class="delete-word-type-btn" data-index="${index}" style="background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ${baseSize * 0.85}px;">
+                        刪除
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          ` : ''}
+          ${showLevelModal ? `
+            <div id="level-modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; padding: 1rem;">
+              <div style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; max-width: 600px; width: 100%; max-height: 80%; overflow-y: auto; box-shadow: 0 20px 25px rgba(0,0,0,0.3);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                  <h2 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">管理等級選項</h2>
+                  <button id="close-level-modal-btn" style="background-color: transparent; border: none; font-size: ${baseSize * 1.5}px; color: ${colors.text}; cursor: pointer; padding: 0.25rem; line-height: 1;">✕</button>
+                </div>
+
+                <div style="margin-bottom: 1.5rem;">
+                  <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                    新增等級選項
+                  </label>
+                  <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <input type="text" id="new-level-label" placeholder="等級名稱 (如: HSK 10)"
+                      style="flex: 1; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                    <input type="number" id="new-level-value" placeholder="等級數值" min="1" max="99"
+                      style="width: 120px; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                  </div>
+                  <button id="add-level-btn" style="width: 100%; padding: 0.75rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                    新增等級
+                  </button>
+                </div>
+
+                <div style="margin-bottom: 1rem;">
+                  <h3 style="font-size: ${baseSize * 1.1}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.75rem;">
+                    現有等級選項 (${customLevels.length})
+                  </h3>
+                </div>
+
+                <div id="levels-list" style="display: grid; gap: 0.5rem;">
+                  ${customLevels.map((level, index) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background-color: ${colors.background}; border-radius: 0.5rem;">
+                      <div>
+                        <span style="font-size: ${baseSize}px; color: ${colors.text}; font-weight: 600;">${level.label}</span>
+                        <span style="font-size: ${baseSize * 0.85}px; color: ${colors.text}; opacity: 0.6; margin-left: 0.5rem;">(數值: ${level.value})</span>
+                      </div>
+                      <button class="delete-level-btn" data-index="${index}" style="background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ${baseSize * 0.85}px;">
+                        刪除
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          ` : ''}
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+              <h1 style="font-size: ${baseSize * 2}px; font-weight: bold; color: ${colors.text};">新增生詞</h1>
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                ${renderSyncIndicator(colors, baseSize)}
+                <button class="back-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  返回首頁
+                </button>
+              </div>
+            </div>
+
+            ${allWords.length >= 999 ? `
+              <div style="background-color: #fef2f2; border: 2px solid #ef4444; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem; color: #991b1b; font-size: ${baseSize}px;">
+                已達到最大生詞數量限制（999個）。請先刪除一些生詞後再新增。
+              </div>
+            ` : ''}
+
+            <form id="add-word-form" style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  簡體字 *
+                </label>
+                <input type="text" id="simplified" required
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  繁體字（自動生成）
+                </label>
+                <input type="text" id="traditional" readonly
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: #f3f4f6; color: ${colors.text}; cursor: not-allowed;">
+                <div style="font-size: ${baseSize * 0.8}px; color: ${colors.text}; opacity: 0.6; margin-top: 0.25rem;">
+                  ✓ 輸入簡體字後自動轉換
+                </div>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  拼音 *
+                </label>
+                <input type="text" id="pinyin" required
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  詞性 *
+                </label>
+                <div style="display: flex; gap: 0.5rem;">
+                  <select id="word-type" required
+                    style="flex: 1; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                    <option value="">選擇詞性</option>
+                    ${customWordTypes.map(type => `<option value="${type}">${type}</option>`).join('')}
+                    <option value="自訂">+ 自訂詞性</option>
+                  </select>
+                  <button type="button" id="manage-word-types-btn"
+                    style="padding: 0.75rem 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 0.9}px; white-space: nowrap;">
+                    管理詞性
+                  </button>
+                </div>
+                <input type="text" id="custom-word-type" placeholder="輸入自訂詞性"
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text}; margin-top: 0.5rem; display: none;">
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  泰文翻譯 * (用 | 分隔多個意思)
+                </label>
+                <textarea id="thai-meanings" required rows="3" placeholder="意思1 | 意思2 | 意思3"
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text}; resize: vertical;"></textarea>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  例句 (用 | 分隔多個例句)
+                </label>
+                <textarea id="examples" rows="3" placeholder="例句1 | 例句2 | 例句3"
+                  style="width: 100%; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text}; resize: vertical;"></textarea>
+              </div>
+
+              <div style="margin-bottom: 2rem;">
+                <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                  HSK 等級 *
+                </label>
+                <div style="display: flex; gap: 0.5rem;">
+                  <select id="hsk-level" required
+                    style="flex: 1; padding: 0.75rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize}px; background-color: white; color: ${colors.text};">
+                    <option value="">選擇等級</option>
+                    ${customLevels.map(level => `<option value="${level.value}">${level.label}</option>`).join('')}
+                  </select>
+                  <button type="button" id="manage-levels-add-btn"
+                    style="padding: 0.75rem 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 0.9}px; white-space: nowrap;">
+                    管理等級
+                  </button>
+                </div>
+              </div>
+
+              <div id="form-message" style="margin-bottom: 1rem; padding: 0.75rem; border-radius: 0.5rem; display: none;"></div>
+
+              <button type="submit" id="submit-btn" ${allWords.length >= 999 ? 'disabled' : ''}
+                style="width: 100%; padding: 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: ${allWords.length >= 999 ? 'not-allowed' : 'pointer'}; font-size: ${baseSize * 1.1}px; font-weight: bold; opacity: ${allWords.length >= 999 ? '0.5' : '1'};">
+                新增生詞到 Canva Sheet
+              </button>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStudy(colors, baseSize, config) {
+      if (!selectedLevel) {
+        return `
+          <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+            <div style="max-width: 800px; margin: 0 auto;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <h1 style="font-size: ${baseSize * 2}px; font-weight: bold; color: ${colors.text};">選擇訓練等級</h1>
+                <button class="back-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  返回首頁
+                </button>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                ${customLevels.map(level => {
+                  let levelWords;
+                  if (level.id === '7-9') {
+                    levelWords = allWords.filter(w => w.hsk_level >= 7 && w.hsk_level <= 9);
+                  } else {
+                    levelWords = allWords.filter(w => w.hsk_level === level.value);
+                  }
+                  return `
+                    <button class="select-level-btn" data-level="${level.id}" ${levelWords.length === 0 ? 'disabled' : ''}
+                      style="padding: 2rem 1rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: ${levelWords.length === 0 ? 'not-allowed' : 'pointer'}; opacity: ${levelWords.length === 0 ? '0.5' : '1'};">
+                      <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">${level.label}</div>
+                      <div style="font-size: ${baseSize * 0.9}px; opacity: 0.7;">${levelWords.length} 個生詞</div>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (!studyMode) {
+        return `
+          <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+            <div style="max-width: 800px; margin: 0 auto;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <h1 style="font-size: ${baseSize * 2}px; font-weight: bold; color: ${colors.text};">HSK ${selectedLevel} 訓練模式</h1>
+                <button class="back-to-level-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  返回
+                </button>
+              </div>
+
+              <div style="display: grid; gap: 1.5rem;">
+                <button class="select-mode-btn" data-mode="flashcard"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">📇 生詞卡模式</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">瀏覽生詞卡，點擊翻轉查看翻譯和例句</div>
+                </button>
+
+                <button class="select-mode-btn" data-mode="test"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">✏️ 測驗模式</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">測試你的記憶，輸入正確的泰文翻譯</div>
+                </button>
+
+                <button class="select-mode-btn" data-mode="multiple-choice"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">🎯 選擇題模式</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">從四個選項中選出正確的泰文翻譯</div>
+                </button>
+
+                <button class="select-mode-btn" data-mode="speed-challenge"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">⚡ 速度挑戰</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">60秒內答對越多越好！測驗反應速度</div>
+                </button>
+
+                <button class="select-mode-btn" data-mode="matching"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">🎴 配對遊戲</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">翻牌找出中文和泰文的配對組合</div>
+                </button>
+
+                <button class="select-mode-btn" data-mode="listening"
+                  style="padding: 2rem; background-color: ${colors.card}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 1rem; cursor: pointer; text-align: left;">
+                  <div style="font-size: ${baseSize * 1.5}px; font-weight: bold; margin-bottom: 0.5rem;">👂 拼音練習</div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.7;">看拼音猜中文，訓練發音記憶</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (studyMode === 'flashcard') {
+        const word = studyWords[currentCardIndex];
+        const meanings = word.thai_meanings ? word.thai_meanings.split('|').filter(m => m.trim()) : [];
+        const examples = word.example_sentences ? word.example_sentences.split('|').filter(e => e.trim()) : [];
+
+        return `
+          <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+            <div style="max-width: 800px; margin: 0 auto;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">生詞卡 ${currentCardIndex + 1} / ${studyWords.length}</h1>
+                <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                  返回
+                </button>
+              </div>
+
+              <div class="card-flip" id="flashcard" style="width: 100%; max-width: 600px; margin: 0 auto 2rem; cursor: pointer;">
+                <div class="card-inner" style="width: 100%; padding-bottom: 100%; position: relative;">
+                  <div class="card-front" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: ${colors.card}; padding: 3rem; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 10px 20px rgba(0,0,0,0.2);">
+                    <div style="font-size: ${baseSize * 4}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1.5rem;">
+                      ${word.simplified}
+                    </div>
+                    <div style="background-color: ${colors.accent}; color: white; padding: 0.75rem 1.5rem; border-radius: 1rem; font-size: ${baseSize * 1.1}px; font-weight: 600;">
+                      ${word.word_type}
+                    </div>
+                    <div style="margin-top: 3rem; font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.5;">
+                      點擊翻轉卡片
+                    </div>
+                  </div>
+
+                  <div class="card-back" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: ${colors.card}; padding: 2rem; overflow-y: auto; box-shadow: 0 10px 20px rgba(0,0,0,0.2);">
+                    <div style="text-align: center; margin-bottom: 2rem;">
+                      <div style="font-size: ${baseSize * 2}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                        ${word.simplified}
+                      </div>
+                      <div style="font-size: ${baseSize}px; color: ${colors.primary};">
+                        ${word.pinyin}
+                      </div>
+                    </div>
+
+                    <div style="margin-bottom: 1.5rem;">
+                      <div style="font-size: ${baseSize}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.5rem;">
+                        詞性：<span style="color: ${colors.accent};">${word.word_type}</span>
+                      </div>
+                    </div>
+
+                    ${meanings.length > 0 ? `
+                      <div style="margin-bottom: 1.5rem;">
+                        <div style="font-size: ${baseSize * 1.1}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.75rem;">
+                          泰文翻譯：
+                        </div>
+                        ${meanings.map(m => `
+                          <div style="font-size: ${baseSize}px; color: ${colors.text}; margin-bottom: 0.5rem; padding-left: 1rem;">
+                            • ${m.trim()}
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+
+                    ${examples.length > 0 ? `
+                      <div>
+                        <div style="font-size: ${baseSize * 1.1}px; font-weight: bold; color: ${colors.text}; margin-bottom: 0.75rem;">
+                          例句：
+                        </div>
+                        ${examples.map(e => `
+                          <div style="font-size: ${baseSize * 0.95}px; color: ${colors.text}; margin-bottom: 0.5rem; padding-left: 1rem; font-style: italic; opacity: 0.9;">
+                            ${e.trim()}
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+
+                    <div style="margin-top: 2rem; text-align: center; font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.5;">
+                      點擊返回正面
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; gap: 1rem;">
+                <button class="prev-card-btn" ${currentCardIndex === 0 ? 'disabled' : ''}
+                  style="flex: 1; padding: 1rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: ${currentCardIndex === 0 ? 'not-allowed' : 'pointer'}; font-size: ${baseSize}px; opacity: ${currentCardIndex === 0 ? '0.5' : '1'};">
+                  ← 上一張
+                </button>
+                <button class="next-card-btn" ${currentCardIndex === studyWords.length - 1 ? 'disabled' : ''}
+                  style="flex: 1; padding: 1rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: ${currentCardIndex === studyWords.length - 1 ? 'not-allowed' : 'pointer'}; font-size: ${baseSize}px; opacity: ${currentCardIndex === studyWords.length - 1 ? '0.5' : '1'};">
+                  下一張 →
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
+    function renderTest(colors, baseSize, config) {
+      const word = studyWords[currentCardIndex];
+      const progress = ((currentCardIndex + 1) / studyWords.length) * 100;
+
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+              <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">測驗模式 - HSK ${selectedLevel}</h1>
+              <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                返回
+              </button>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">進度：${currentCardIndex + 1} / ${studyWords.length}</span>
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">目前得分：${testScore}</span>
+              </div>
+              <div style="width: 100%; height: 10px; background-color: ${colors.card}; border-radius: 1rem; overflow: hidden;">
+                <div style="width: ${progress}%; height: 100%; background-color: ${colors.accent}; transition: width 0.3s;"></div>
+              </div>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 3rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+              <div style="text-align: center; margin-bottom: 2rem;">
+                <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
+                  ${word.simplified}
+                </div>
+                <div style="font-size: ${baseSize * 1.2}px; color: ${colors.text}; opacity: 0.6; margin-bottom: 1rem;">
+                  ${word.traditional}
+                </div>
+                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary};">
+                  ${word.pinyin}
+                </div>
+              </div>
+
+              <form id="test-form">
+                <div style="margin-bottom: 1.5rem;">
+                  <label style="display: block; font-size: ${baseSize}px; font-weight: 600; color: ${colors.text}; margin-bottom: 0.5rem;">
+                    請輸入泰文翻譯：
+                  </label>
+                  <input type="text" id="answer-input" required autofocus
+                    style="width: 100%; padding: 1rem; border: 2px solid ${colors.primary}; border-radius: 0.5rem; font-size: ${baseSize * 1.1}px; background-color: white; color: ${colors.text};">
+                </div>
+
+                <div id="answer-feedback" style="margin-bottom: 1.5rem; padding: 1rem; border-radius: 0.5rem; display: none;"></div>
+
+                <button type="submit" id="check-answer-btn"
+                  style="width: 100%; padding: 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 1.1}px; font-weight: bold;">
+                  檢查答案
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMultipleChoice(colors, baseSize, config) {
+      const word = studyWords[currentCardIndex];
+      const progress = ((currentCardIndex + 1) / studyWords.length) * 100;
+
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+              <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">選擇題模式 - HSK ${selectedLevel}</h1>
+              <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                返回
+              </button>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">進度：${currentCardIndex + 1} / ${studyWords.length}</span>
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">目前得分：${testScore}</span>
+              </div>
+              <div style="width: 100%; height: 10px; background-color: ${colors.card}; border-radius: 1rem; overflow: hidden;">
+                <div style="width: ${progress}%; height: 100%; background-color: ${colors.accent}; transition: width 0.3s;"></div>
+              </div>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 3rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+              <div style="text-align: center; margin-bottom: 3rem;">
+                <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
+                  ${word.simplified}
+                </div>
+                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary};">
+                  ${word.pinyin}
+                </div>
+              </div>
+
+              <div style="margin-bottom: 1.5rem;">
+                <div style="font-size: ${baseSize * 1.1}px; font-weight: 600; color: ${colors.text}; margin-bottom: 1rem; text-align: center;">
+                  選擇正確的泰文翻譯：
+                </div>
+              </div>
+
+              <div id="choices-container" style="display: grid; gap: 1rem;">
+                ${gameOptions.map((option, index) => `
+                  <button class="choice-btn" data-index="${index}" data-correct="${option.isCorrect}"
+                    style="padding: 1.5rem; background-color: ${colors.background}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px; text-align: left;">
+                    ${option.text}
+                  </button>
+                `).join('')}
+              </div>
+
+              <div id="choice-feedback" style="margin-top: 1.5rem; padding: 1rem; border-radius: 0.5rem; display: none;"></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSpeedChallenge(colors, baseSize, config) {
+      const word = studyWords[currentCardIndex];
+
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+              <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">⚡ 速度挑戰 - HSK ${selectedLevel}</h1>
+              <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                返回
+              </button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem;">
+              <div style="background-color: ${colors.card}; padding: 1.5rem; border-radius: 0.5rem; text-align: center;">
+                <div style="font-size: ${baseSize * 2.5}px; font-weight: bold; color: ${colors.accent};" id="timer">
+                  ${gameTimeLeft}
+                </div>
+                <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7;">剩餘時間（秒）</div>
+              </div>
+              <div style="background-color: ${colors.card}; padding: 1.5rem; border-radius: 0.5rem; text-align: center;">
+                <div style="font-size: ${baseSize * 2.5}px; font-weight: bold; color: ${colors.primary};">
+                  ${testScore}
+                </div>
+                <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7;">答對題數</div>
+              </div>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 3rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+              <div style="text-align: center; margin-bottom: 2rem;">
+                <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
+                  ${word.simplified}
+                </div>
+                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary};">
+                  ${word.pinyin}
+                </div>
+              </div>
+
+              <div id="speed-choices-container" style="display: grid; gap: 1rem;">
+                ${gameOptions.map((option, index) => `
+                  <button class="speed-choice-btn" data-index="${index}" data-correct="${option.isCorrect}"
+                    style="padding: 1.5rem; background-color: ${colors.background}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px; text-align: left;">
+                    ${option.text}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMatching(colors, baseSize, config) {
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 900px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+              <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">🎴 配對遊戲 - HSK ${selectedLevel}</h1>
+              <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                返回
+              </button>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 2rem; text-align: center;">
+              <div style="font-size: ${baseSize * 1.2}px; color: ${colors.text};">
+                已配對：<span style="font-weight: bold; color: ${colors.accent};">${matchedPairs.length}</span> / ${matchingPairs.length}
+              </div>
+            </div>
+
+            <div id="matching-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+              ${matchingPairs.map((pair, index) => `
+                <div class="matching-card ${matchedPairs.includes(index) ? 'matched' : ''}" data-index="${index}"
+                  style="aspect-ratio: 1; cursor: pointer; perspective: 1000px;">
+                  <div class="card-inner" style="width: 100%; height: 100%; position: relative; transition: transform 0.6s; transform-style: preserve-3d;">
+                    <div class="card-front" style="position: absolute; width: 100%; height: 100%; background-color: ${colors.primary}; border-radius: 0.5rem; display: flex; align-items: center; justify-content: center; backface-visibility: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                      <div style="font-size: ${baseSize * 2}px; color: white;">?</div>
+                    </div>
+                    <div class="card-back" style="position: absolute; width: 100%; height: 100%; background-color: ${colors.card}; border: 2px solid ${colors.primary}; border-radius: 0.5rem; display: flex; align-items: center; justify-content: center; backface-visibility: hidden; transform: rotateY(180deg); padding: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                      <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; font-weight: bold; text-align: center; word-break: break-word;">
+                        ${pair.text}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderListening(colors, baseSize, config) {
+      const word = studyWords[currentCardIndex];
+      const progress = ((currentCardIndex + 1) / studyWords.length) * 100;
+
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+              <h1 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text};">👂 拼音練習 - HSK ${selectedLevel}</h1>
+              <button class="back-to-mode-btn" style="padding: 0.75rem 1.5rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px;">
+                返回
+              </button>
+            </div>
+
+            <div style="margin-bottom: 2rem;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">進度：${currentCardIndex + 1} / ${studyWords.length}</span>
+                <span style="font-size: ${baseSize * 0.9}px; color: ${colors.text};">目前得分：${testScore}</span>
+              </div>
+              <div style="width: 100%; height: 10px; background-color: ${colors.card}; border-radius: 1rem; overflow: hidden;">
+                <div style="width: ${progress}%; height: 100%; background-color: ${colors.accent}; transition: width 0.3s;"></div>
+              </div>
+            </div>
+
+            <div style="background-color: ${colors.card}; padding: 3rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+              <div style="text-align: center; margin-bottom: 3rem;">
+                <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.7; margin-bottom: 1rem;">
+                  根據拼音選擇正確的中文
+                </div>
+                <div style="font-size: ${baseSize * 3.5}px; font-weight: bold; color: ${colors.primary}; margin-bottom: 1rem;">
+                  ${word.pinyin}
+                </div>
+                <div style="font-size: ${baseSize}px; color: ${colors.text}; opacity: 0.6;">
+                  詞性：${word.word_type}
+                </div>
+              </div>
+
+              <div id="listening-choices-container" style="display: grid; gap: 1rem;">
+                ${gameOptions.map((option, index) => `
+                  <button class="listening-choice-btn" data-index="${index}" data-correct="${option.isCorrect}"
+                    style="padding: 1.5rem; background-color: ${colors.background}; color: ${colors.text}; border: 2px solid ${colors.primary}; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize * 1.3}px; font-weight: bold; text-align: center;">
+                    ${option.text}
+                  </button>
+                `).join('')}
+              </div>
+
+              <div id="listening-feedback" style="margin-top: 1.5rem; padding: 1rem; border-radius: 0.5rem; display: none;"></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderResults(colors, baseSize, config) {
+      const percentage = Math.round((testScore / studyWords.length) * 100);
+
+      return `
+        <div class="w-full min-h-full" style="background-color: ${colors.background}; padding: 2rem;">
+          <div style="max-width: 800px; margin: 0 auto;">
+            <div style="text-align: center; margin-bottom: 3rem;">
+              <h1 style="font-size: ${baseSize * 2.5}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
+                ${studyMode === 'speed-challenge' ? '⚡ 挑戰完成！' : '測驗完成！'}
+              </h1>
+              <div style="font-size: ${baseSize * 4}px; font-weight: bold; color: ${colors.primary}; margin-bottom: 1rem;">
+                ${studyMode === 'speed-challenge' ? `${testScore} 題` : `${percentage}%`}
+              </div>
+              <div style="font-size: ${baseSize * 1.3}px; color: ${colors.text};">
+                ${studyMode === 'speed-challenge' ? `60秒內答對 ${testScore} 題！` : `答對 ${testScore} / ${studyWords.length} 題`}
+              </div>
+            </div>
+
+            ${testAnswers.length > 0 ? `
+              <div style="background-color: ${colors.card}; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+                <h2 style="font-size: ${baseSize * 1.5}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1.5rem;">答題詳情</h2>
+                ${testAnswers.map((item, index) => {
+                  const meanings = item.word.thai_meanings ? item.word.thai_meanings.split('|').filter(m => m.trim()) : [];
+
+                  return `
+                    <div style="padding: 1rem; margin-bottom: 1rem; background-color: ${item.correct ? '#f0fdf4' : '#fef2f2'}; border-left: 4px solid ${item.correct ? colors.accent : '#ef4444'}; border-radius: 0.5rem;">
+                      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                        <div>
+                          <span style="font-size: ${baseSize * 1.2}px; font-weight: bold; color: ${colors.text};">
+                            ${item.word.simplified}
+                          </span>
+                          <span style="font-size: ${baseSize}px; color: ${colors.text}; opacity: 0.7; margin-left: 0.5rem;">
+                            ${item.word.pinyin}
+                          </span>
+                        </div>
+                        <span style="font-size: ${baseSize * 1.5}px;">
+                          ${item.correct ? '✓' : '✗'}
+                        </span>
+                      </div>
+                      ${item.userAnswer ? `
+                        <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.8;">
+                          你的答案：${item.userAnswer}
+                        </div>
+                      ` : ''}
+                      <div style="font-size: ${baseSize * 0.9}px; color: ${colors.text}; opacity: 0.8; margin-top: 0.25rem;">
+                        正確答案：${meanings.join(' / ')}
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : ''}
+
+            <div style="display: flex; gap: 1rem;">
+              <button class="retry-test-btn" style="flex: 1; padding: 1rem; background-color: ${colors.accent}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px; font-weight: bold;">
+                再${studyMode === 'matching' ? '玩' : '測'}一次
+              </button>
+              <button class="back-btn" style="flex: 1; padding: 1rem; background-color: ${colors.primary}; color: white; border: none; border-radius: 0.5rem; cursor: pointer; font-size: ${baseSize}px; font-weight: bold;">
+                返回首頁
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function generateMultipleChoiceOptions(correctWord, allWordsPool) {
+      const correctMeanings = correctWord.thai_meanings.split('|').map(m => m.trim());
+      const correctAnswer = correctMeanings[0];
+
+      const otherWords = allWordsPool.filter(w => w.id !== correctWord.id);
+      const shuffled = otherWords.sort(() => Math.random() - 0.5);
+
+      const wrongOptions = [];
+      for (let i = 0; i < shuffled.length && wrongOptions.length < 3; i++) {
+        const meanings = shuffled[i].thai_meanings.split('|').map(m => m.trim());
+        if (meanings[0] && meanings[0] !== correctAnswer) {
+          wrongOptions.push(meanings[0]);
+        }
+      }
+
+      while (wrongOptions.length < 3) {
+        wrongOptions.push(`選項 ${wrongOptions.length + 1}`);
+      }
+
+      const options = [
+        { text: correctAnswer, isCorrect: true },
+        { text: wrongOptions[0], isCorrect: false },
+        { text: wrongOptions[1], isCorrect: false },
+        { text: wrongOptions[2], isCorrect: false }
+      ];
+
+      return options.sort(() => Math.random() - 0.5);
+    }
+
+    function generateListeningOptions(correctWord, allWordsPool) {
+      const otherWords = allWordsPool.filter(w => w.id !== correctWord.id);
+      const shuffled = otherWords.sort(() => Math.random() - 0.5);
+
+      const wrongOptions = shuffled.slice(0, 3).map(w => w.simplified);
+
+      const options = [
+        { text: correctWord.simplified, isCorrect: true },
+        { text: wrongOptions[0] || '選項1', isCorrect: false },
+        { text: wrongOptions[1] || '選項2', isCorrect: false },
+        { text: wrongOptions[2] || '選項3', isCorrect: false }
+      ];
+
+      return options.sort(() => Math.random() - 0.5);
+    }
+
+    function generateMatchingPairs(words) {
+      const pairs = [];
+      const selectedWords = words.slice(0, Math.min(6, words.length));
+
+      selectedWords.forEach(word => {
+        const meanings = word.thai_meanings.split('|').map(m => m.trim());
+        pairs.push({ text: word.simplified, matchId: word.id, type: 'chinese' });
+        pairs.push({ text: meanings[0], matchId: word.id, type: 'thai' });
+      });
+
+      return pairs.sort(() => Math.random() - 0.5);
+    }
+
+    function startSpeedTimer() {
+      if (gameTimer) clearInterval(gameTimer);
+
+      gameTimer = setInterval(() => {
+        gameTimeLeft--;
+        const timerElement = document.getElementById('timer');
+        if (timerElement) {
+          timerElement.textContent = gameTimeLeft;
+        }
+
+        if (gameTimeLeft <= 0) {
+          clearInterval(gameTimer);
+          currentView = 'results';
+          renderApp();
+        }
+      }, 1000);
+    }
+
+    function attachEventListeners() {
+      const actionCards = document.querySelectorAll('.action-card');
+      actionCards.forEach(card => {
+        card.addEventListener('click', () => {
+          const action = card.dataset.action;
+          if (action === 'browse') {
+            currentView = 'browse';
+            renderApp();
+          } else if (action === 'add') {
+            currentView = 'add';
+            renderApp();
+          } else if (action === 'study') {
+            currentView = 'study';
+            selectedLevel = null;
+            studyMode = null;
+            renderApp();
+          }
+        });
+
+        card.addEventListener('mouseenter', (e) => {
+          e.currentTarget.style.transform = 'translateY(-4px)';
+        });
+
+        card.addEventListener('mouseleave', (e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+        });
+      });
+
+      const backBtns = document.querySelectorAll('.back-btn');
+      backBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (gameTimer) clearInterval(gameTimer);
+          currentView = 'home';
+          selectedLevel = null;
+          studyMode = null;
+          currentCardIndex = 0;
+          gameTimeLeft = 60;
+          renderApp();
+        });
+      });
+
+      const searchInput = document.getElementById('search-input');
+      if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+          const query = e.target.value.toLowerCase();
+          const filtered = allWords.filter(word =>
+            word.simplified.includes(query) ||
+            word.traditional.includes(query) ||
+            word.pinyin.toLowerCase().includes(query) ||
+            word.thai_meanings.toLowerCase().includes(query)
+          );
+
+          const container = document.getElementById('words-container');
+          const colors = getColors();
+          const baseSize = getFontSize();
+          container.innerHTML = renderWordCards(filtered, colors, baseSize);
+          attachDeleteListeners();
+        });
+      }
+
+      const levelFilters = document.querySelectorAll('.level-filter');
+      levelFilters.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const level = btn.dataset.level;
+          const colors = getColors();
+
+          levelFilters.forEach(b => {
+            if (b === btn) {
+              b.style.backgroundColor = colors.primary;
+              b.style.color = 'white';
+            } else {
+              b.style.backgroundColor = colors.card;
+              b.style.color = colors.text;
+            }
+          });
+
+          let filtered;
+          if (level === 'all') {
+            filtered = allWords;
+          } else if (level === '7-9') {
+            filtered = allWords.filter(w => w.hsk_level >= 7 && w.hsk_level <= 9);
+          } else {
+            const levelConfig = customLevels.find(l => l.id === level);
+            if (levelConfig) {
+              filtered = allWords.filter(w => w.hsk_level === levelConfig.value);
+            } else {
+              filtered = allWords;
+            }
+          }
+
+          const container = document.getElementById('words-container');
+          const baseSize = getFontSize();
+          container.innerHTML = renderWordCards(filtered, colors, baseSize);
+          attachDeleteListeners();
+        });
+      });
+
+      attachDeleteListeners();
+
+      const wordTypeSelect = document.getElementById('word-type');
+      const customWordTypeInput = document.getElementById('custom-word-type');
+
+      if (wordTypeSelect) {
+        wordTypeSelect.addEventListener('change', (e) => {
+          if (e.target.value === '自訂') {
+            customWordTypeInput.style.display = 'block';
+            customWordTypeInput.required = true;
+            wordTypeSelect.required = false;
+          } else {
+            customWordTypeInput.style.display = 'none';
+            customWordTypeInput.required = false;
+            wordTypeSelect.required = true;
+          }
+        });
+      }
+
+      const manageWordTypesBtn = document.getElementById('manage-word-types-btn');
+      if (manageWordTypesBtn) {
+        manageWordTypesBtn.addEventListener('click', () => {
+          showWordTypeModal = true;
+          renderApp();
+        });
+      }
+
+      const manageLevelsBtn = document.getElementById('manage-levels-btn');
+      if (manageLevelsBtn) {
+        manageLevelsBtn.addEventListener('click', () => {
+          showLevelModal = true;
+          renderApp();
+        });
+      }
+
+      const manageLevelsAddBtn = document.getElementById('manage-levels-add-btn');
+      if (manageLevelsAddBtn) {
+        manageLevelsAddBtn.addEventListener('click', () => {
+          showLevelModal = true;
+          renderApp();
+        });
+      }
+
+      const closeModalBtn = document.getElementById('close-modal-btn');
+      if (closeModalBtn) {
+        closeModalBtn.addEventListener('click', () => {
+          showWordTypeModal = false;
+          renderApp();
+        });
+      }
+
+      const closeLevelModalBtn = document.getElementById('close-level-modal-btn');
+      if (closeLevelModalBtn) {
+        closeLevelModalBtn.addEventListener('click', () => {
+          showLevelModal = false;
+          renderApp();
+        });
+      }
+
+      const addWordTypeBtn = document.getElementById('add-word-type-btn');
+      if (addWordTypeBtn) {
+        addWordTypeBtn.addEventListener('click', () => {
+          const input = document.getElementById('new-word-type-input');
+          const newType = input.value.trim();
+
+          if (newType && !customWordTypes.includes(newType)) {
+            customWordTypes.push(newType);
+            input.value = '';
+            renderApp();
+          } else if (customWordTypes.includes(newType)) {
+            const colors = getColors();
+            const baseSize = getFontSize();
+            input.style.borderColor = '#ef4444';
+            setTimeout(() => {
+              input.style.borderColor = colors.primary;
+            }, 2000);
+          }
+        });
+      }
+
+      const deleteWordTypeBtns = document.querySelectorAll('.delete-word-type-btn');
+      deleteWordTypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const index = parseInt(btn.dataset.index);
+          customWordTypes.splice(index, 1);
+          renderApp();
+        });
+      });
+
+      const addLevelBtn = document.getElementById('add-level-btn');
+      if (addLevelBtn) {
+        addLevelBtn.addEventListener('click', () => {
+          const labelInput = document.getElementById('new-level-label');
+          const valueInput = document.getElementById('new-level-value');
+          const newLabel = labelInput.value.trim();
+          const newValue = parseInt(valueInput.value);
+
+          if (newLabel && newValue && !customLevels.find(l => l.id === newValue.toString())) {
+            customLevels.push({
+              id: newValue.toString(),
+              label: newLabel,
+              value: newValue
+            });
+            customLevels.sort((a, b) => a.value - b.value);
+            labelInput.value = '';
+            valueInput.value = '';
+            renderApp();
+          } else if (customLevels.find(l => l.id === newValue.toString())) {
+            const colors = getColors();
+            valueInput.style.borderColor = '#ef4444';
+            setTimeout(() => {
+              valueInput.style.borderColor = colors.primary;
+            }, 2000);
+          }
+        });
+      }
+
+      const deleteLevelBtns = document.querySelectorAll('.delete-level-btn');
+      deleteLevelBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const index = parseInt(btn.dataset.index);
+          customLevels.splice(index, 1);
+          renderApp();
+        });
+      });
+
+      const simplifiedInput = document.getElementById('simplified');
+      const traditionalInput = document.getElementById('traditional');
+
+      if (simplifiedInput && traditionalInput) {
+        simplifiedInput.addEventListener('input', (e) => {
+          const simplifiedText = e.target.value;
+          if (simplifiedText) {
+            traditionalInput.value = convertToTraditional(simplifiedText);
+          } else {
+            traditionalInput.value = '';
+          }
+        });
+
+        if (simplifiedInput.value) {
+          simplifiedInput.dispatchEvent(new Event('input'));
+        }
+      }
+
+      const addWordForm = document.getElementById('add-word-form');
+      if (addWordForm) {
+        addWordForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+
+          if (allWords.length >= 999) {
+            showFormMessage('已達到最大生詞數量限制（999個）', false);
+            return;
+          }
+
+          const submitBtn = document.getElementById('submit-btn');
+          const messageDiv = document.getElementById('form-message');
+
+          submitBtn.disabled = true;
+          submitBtn.textContent = '同步到 Canva Sheet...';
+          isLoading = true;
+
+          const wordTypeSelect = document.getElementById('word-type');
+          const customWordTypeInput = document.getElementById('custom-word-type');
+          let finalWordType = wordTypeSelect.value;
+
+          if (wordTypeSelect.value === '自訂') {
+            finalWordType = customWordTypeInput.value.trim();
+            if (finalWordType && !customWordTypes.includes(finalWordType)) {
+              customWordTypes.push(finalWordType);
+            }
+          }
+
+          const wordData = {
+            id: Date.now().toString(),
+            simplified: document.getElementById('simplified').value.trim(),
+            traditional: document.getElementById('traditional').value.trim(),
+            pinyin: document.getElementById('pinyin').value.trim(),
+            word_type: finalWordType,
+            thai_meanings: document.getElementById('thai-meanings').value.trim(),
+            example_sentences: document.getElementById('examples').value.trim(),
+            hsk_level: parseInt(document.getElementById('hsk-level').value),
+            created_at: new Date().toISOString()
+          };
+
+          const result = await window.dataSdk.create(wordData);
+
+          isLoading = false;
+
+          if (result.isOk) {
+            showFormMessage('✓ 生詞已成功新增並同步到 Canva Sheet！', true);
+            addWordForm.reset();
+            setTimeout(() => {
+              currentView = 'browse';
+              renderApp();
+            }, 1500);
+          } else {
+            showFormMessage('✗ 新增失敗，請稍後再試', false);
+            submitBtn.disabled = false;
+            submitBtn.textContent = '新增生詞到 Canva Sheet';
+          }
+        });
+      }
+
+      const selectLevelBtns = document.querySelectorAll('.select-level-btn');
+      selectLevelBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          selectedLevel = btn.dataset.level;
+          renderApp();
+        });
+      });
+
+      const backToLevelBtn = document.querySelector('.back-to-level-btn');
+      if (backToLevelBtn) {
+        backToLevelBtn.addEventListener('click', () => {
+          if (gameTimer) clearInterval(gameTimer);
+          selectedLevel = null;
+          studyMode = null;
+          gameTimeLeft = 60;
+          renderApp();
+        });
+      }
+
+      const selectModeBtns = document.querySelectorAll('.select-mode-btn');
+      selectModeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          studyMode = btn.dataset.mode;
+
+          if (selectedLevel === '7-9') {
+            studyWords = allWords.filter(w => w.hsk_level >= 7 && w.hsk_level <= 9);
+          } else {
+            const levelConfig = customLevels.find(l => l.id === selectedLevel);
+            if (levelConfig) {
+              studyWords = allWords.filter(w => w.hsk_level === levelConfig.value);
+            }
+          }
+
+          studyWords = studyWords.sort(() => Math.random() - 0.5);
+          currentCardIndex = 0;
+          testScore = 0;
+          testAnswers = [];
+          gameTimeLeft = 60;
+
+          if (studyMode === 'test') {
+            currentView = 'test';
+          } else if (studyMode === 'multiple-choice') {
+            currentView = 'multiple-choice';
+            gameOptions = generateMultipleChoiceOptions(studyWords[0], studyWords);
+          } else if (studyMode === 'speed-challenge') {
+            currentView = 'speed-challenge';
+            gameOptions = generateMultipleChoiceOptions(studyWords[0], studyWords);
+            setTimeout(() => startSpeedTimer(), 100);
+          } else if (studyMode === 'matching') {
+            currentView = 'matching';
+            matchingPairs = generateMatchingPairs(studyWords);
+            selectedCards = [];
+            matchedPairs = [];
+            gameStartTime = Date.now();
+          } else if (studyMode === 'listening') {
+            currentView = 'listening';
+            gameOptions = generateListeningOptions(studyWords[0], studyWords);
+          }
+
+          renderApp();
+        });
+      });
+
+      const flashcard = document.getElementById('flashcard');
+      if (flashcard) {
+        flashcard.addEventListener('click', () => {
+          flashcard.classList.toggle('flipped');
+        });
+      }
+
+      const prevCardBtn = document.querySelector('.prev-card-btn');
+      if (prevCardBtn) {
+        prevCardBtn.addEventListener('click', () => {
+          if (currentCardIndex > 0) {
+            currentCardIndex--;
+            renderApp();
+          }
+        });
+      }
+
+      const nextCardBtn = document.querySelector('.next-card-btn');
+      if (nextCardBtn) {
+        nextCardBtn.addEventListener('click', () => {
+          if (currentCardIndex < studyWords.length - 1) {
+            currentCardIndex++;
+            renderApp();
+          }
+        });
+      }
+
+      const backToModeBtn = document.querySelector('.back-to-mode-btn');
+      if (backToModeBtn) {
+        backToModeBtn.addEventListener('click', () => {
+          if (gameTimer) clearInterval(gameTimer);
+          studyMode = null;
+          currentCardIndex = 0;
+          gameTimeLeft = 60;
+          if (currentView === 'test' || currentView === 'multiple-choice' || currentView === 'speed-challenge' || currentView === 'matching' || currentView === 'listening') {
+            currentView = 'study';
+          }
+          renderApp();
+        });
+      }
+
+      const testForm = document.getElementById('test-form');
+      if (testForm) {
+        testForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+
+          const answerInput = document.getElementById('answer-input');
+          const userAnswer = answerInput.value.trim();
+          const word = studyWords[currentCardIndex];
+          const meanings = word.thai_meanings.split('|').map(m => m.trim().toLowerCase());
+
+          const isCorrect = meanings.some(m => m === userAnswer.toLowerCase());
+
+          if (isCorrect) {
+            testScore++;
+          }
+
+          testAnswers.push({
+            word: word,
+            userAnswer: userAnswer,
+            correct: isCorrect
+          });
+
+          const feedback = document.getElementById('answer-feedback');
+          const colors = getColors();
+          const baseSize = getFontSize();
+
+          if (isCorrect) {
+            feedback.style.display = 'block';
+            feedback.style.backgroundColor = '#f0fdf4';
+            feedback.style.border = `2px solid ${colors.accent}`;
+            feedback.style.color = '#166534';
+            feedback.innerHTML = `<div style="font-size: ${baseSize}px; font-weight: bold;">✓ 正確！</div>`;
+          } else {
+            feedback.style.display = 'block';
+            feedback.style.backgroundColor = '#fef2f2';
+            feedback.style.border = '2px solid #ef4444';
+            feedback.style.color = '#991b1b';
+            feedback.innerHTML = `
+              <div style="font-size: ${baseSize}px; font-weight: bold; margin-bottom: 0.5rem;">✗ 答錯了</div>
+              <div style="font-size: ${baseSize * 0.9}px;">正確答案：${meanings.join(' / ')}</div>
+            `;
+          }
+
+          answerInput.disabled = true;
+          const checkBtn = document.getElementById('check-answer-btn');
+          checkBtn.textContent = currentCardIndex < studyWords.length - 1 ? '下一題' : '查看結果';
+          checkBtn.style.backgroundColor = colors.primary;
+
+          checkBtn.onclick = () => {
+            if (currentCardIndex < studyWords.length - 1) {
+              currentCardIndex++;
+              renderApp();
+            } else {
+              currentView = 'results';
+              renderApp();
+            }
+          };
+        });
+      }
+
+      const choiceBtns = document.querySelectorAll('.choice-btn');
+      choiceBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const isCorrect = btn.dataset.correct === 'true';
+          const colors = getColors();
+          const baseSize = getFontSize();
+
+          choiceBtns.forEach(b => b.disabled = true);
+
+          if (isCorrect) {
+            testScore++;
+            btn.classList.add('correct');
+            btn.style.backgroundColor = colors.accent;
+            btn.style.color = 'white';
+            btn.style.borderColor = colors.accent;
+          } else {
+            btn.classList.add('wrong');
+            btn.style.backgroundColor = '#ef4444';
+            btn.style.color = 'white';
+            btn.style.borderColor = '#ef4444';
+
+            choiceBtns.forEach(b => {
+              if (b.dataset.correct === 'true') {
+                b.style.backgroundColor = colors.accent;
+                b.style.color = 'white';
+                b.style.borderColor = colors.accent;
+              }
+            });
+          }
+
+          const word = studyWords[currentCardIndex];
+          testAnswers.push({
+            word: word,
+            userAnswer: btn.textContent.trim(),
+            correct: isCorrect
+          });
+
+          const feedback = document.getElementById('choice-feedback');
+          feedback.style.display = 'block';
+
+          if (isCorrect) {
+            feedback.style.backgroundColor = '#f0fdf4';
+            feedback.style.border = `2px solid ${colors.accent}`;
+            feedback.style.color = '#166534';
+            feedback.innerHTML = `<div style="font-size: ${baseSize}px; font-weight: bold; text-align: center;">✓ 正確！</div>`;
+          } else {
+            feedback.style.backgroundColor = '#fef2f2';
+            feedback.style.border = '2px solid #ef4444';
+            feedback.style.color = '#991b1b';
+            feedback.innerHTML = `<div style="font-size: ${baseSize}px; font-weight: bold; text-align: center;">✗ 答錯了</div>`;
+          }
+
+          setTimeout(() => {
+            if (currentCardIndex < studyWords.length - 1) {
+              currentCardIndex++;
+              gameOptions = generateMultipleChoiceOptions(studyWords[currentCardIndex], studyWords);
+              renderApp();
+            } else {
+              currentView = 'results';
+              renderApp();
+            }
+          }, 1500);
+        });
+      });
+
+      const speedChoiceBtns = document.querySelectorAll('.speed-choice-btn');
+      speedChoiceBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const isCorrect = btn.dataset.correct === 'true';
+          const colors = getColors();
+
+          if (isCorrect) {
+            testScore++;
+            btn.style.backgroundColor = colors.accent;
+            btn.style.color = 'white';
+
+            const word = studyWords[currentCardIndex];
+            testAnswers.push({
+              word: word,
+              userAnswer: btn.textContent.trim(),
+              correct: true
+            });
+
+            setTimeout(() => {
+              currentCardIndex++;
+              if (currentCardIndex >= studyWords.length) {
+                studyWords = studyWords.sort(() => Math.random() - 0.5);
+                currentCardIndex = 0;
+              }
+              gameOptions = generateMultipleChoiceOptions(studyWords[currentCardIndex], studyWords);
+              renderApp();
+            }, 300);
+          } else {
+            btn.classList.add('shake');
+            btn.style.backgroundColor = '#ef4444';
+            btn.style.color = 'white';
+
+            setTimeout(() => {
+              btn.style.backgroundColor = colors.background;
+              btn.style.color = colors.text;
+              btn.classList.remove('shake');
+            }, 500);
+          }
+        });
+      });
+
+      const matchingCards = document.querySelectorAll('.matching-card');
+      matchingCards.forEach(card => {
+        card.addEventListener('click', () => {
+          if (card.classList.contains('matched') || card.classList.contains('flipped')) return;
+
+          const index = parseInt(card.dataset.index);
+          card.classList.add('flipped');
+          selectedCards.push(index);
+
+          if (selectedCards.length === 2) {
+            const [first, second] = selectedCards;
+            const firstPair = matchingPairs[first];
+            const secondPair = matchingPairs[second];
+
+            if (firstPair.matchId === secondPair.matchId && firstPair.type !== secondPair.type) {
+              setTimeout(() => {
+                matchedPairs.push(first, second);
+
+                if (matchedPairs.length === matchingPairs.length) {
+                  testScore = Math.round((Date.now() - gameStartTime) / 1000);
+                  setTimeout(() => {
+                    currentView = 'results';
+                    renderApp();
+                  }, 500);
+                } else {
+                  renderApp();
+                }
+              }, 600);
+            } else {
+              setTimeout(() => {
+                const cards = document.querySelectorAll('.matching-card');
+                cards[first].classList.remove('flipped');
+                cards[second].classList.remove('flipped');
+                selectedCards = [];
+              }, 1000);
+            }
+
+            if (matchedPairs.length < matchingPairs.length) {
+              selectedCards = [];
+            }
+          }
+        });
+      });
+
+      const listeningChoiceBtns = document.querySelectorAll('.listening-choice-btn');
+      listeningChoiceBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const isCorrect = btn.dataset.correct === 'true';
+          const colors = getColors();
+          const baseSize = getFontSize();
+
+          listeningChoiceBtns.forEach(b => b.disabled = true);
+
+          if (isCorrect) {
+            testScore++;
+            btn.classList.add('correct');
+            btn.style.backgroundColor = colors.accent;
+            btn.style.color = 'white';
+            btn.style.borderColor = colors.accent;
+          } else {
+            btn.classList.add('wrong');
+            btn.style.backgroundColor = '#ef4444';
+            btn.style.color = 'white';
+            btn.style.borderColor = '#ef4444';
+
+            listeningChoiceBtns.forEach(b => {
+              if (b.dataset.correct === 'true') {
+                b.style.backgroundColor = colors.accent;
+                b.style.color = 'white';
+                b.style.borderColor = colors.accent;
+              }
+            });
+          }
+
+          const word = studyWords[currentCardIndex];
+          testAnswers.push({
+            word: word,
+            userAnswer: btn.textContent.trim(),
+            correct: isCorrect
+          });
+
+          const feedback = document.getElementById('listening-feedback');
+          feedback.style.display = 'block';
+
+          if (isCorrect) {
+            feedback.style.backgroundColor = '#f0fdf4';
+            feedback.style.border = `2px solid ${colors.accent}`;
+            feedback.style.color = '#166534';
+            feedback.innerHTML = `<div style="font-size: ${baseSize}px; font-weight: bold; text-align: center;">✓ 正確！</div>`;
+          } else {
+            feedback.style.backgroundColor = '#fef2f2';
+            feedback.style.border = '2px solid #ef4444';
+            feedback.style.color = '#991b1b';
+            feedback.innerHTML = `<div style="font-size: ${baseSize}px; font-weight: bold; text-align: center;">✗ 答錯了</div>`;
+          }
+
+          setTimeout(() => {
+            if (currentCardIndex < studyWords.length - 1) {
+              currentCardIndex++;
+              gameOptions = generateListeningOptions(studyWords[currentCardIndex], studyWords);
+              renderApp();
+            } else {
+              currentView = 'results';
+              renderApp();
+            }
+          }, 1500);
+        });
+      });
+
+      const retryTestBtn = document.querySelector('.retry-test-btn');
+      if (retryTestBtn) {
+        retryTestBtn.addEventListener('click', () => {
+          studyWords = studyWords.sort(() => Math.random() - 0.5);
+          currentCardIndex = 0;
+          testScore = 0;
+          testAnswers = [];
+          gameTimeLeft = 60;
+          selectedCards = [];
+          matchedPairs = [];
+          gameStartTime = null;
+
+          if (studyMode === 'test') {
+            currentView = 'test';
+          } else if (studyMode === 'multiple-choice') {
+            currentView = 'multiple-choice';
+            gameOptions = generateMultipleChoiceOptions(studyWords[0], studyWords);
+          } else if (studyMode === 'speed-challenge') {
+            currentView = 'speed-challenge';
+            gameOptions = generateMultipleChoiceOptions(studyWords[0], studyWords);
+            setTimeout(() => startSpeedTimer(), 100);
+          } else if (studyMode === 'matching') {
+            currentView = 'matching';
+            matchingPairs = generateMatchingPairs(studyWords);
+            gameStartTime = Date.now();
+          } else if (studyMode === 'listening') {
+            currentView = 'listening';
+            gameOptions = generateListeningOptions(studyWords[0], studyWords);
+          }
+
+          renderApp();
+        });
+      }
+    }
+
+    function attachDeleteListeners() {
+      const deleteBtns = document.querySelectorAll('.delete-word-btn');
+      deleteBtns.forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+
+          const wordId = btn.dataset.id;
+          const word = allWords.find(w => w.id === wordId);
+
+          if (!word) return;
+
+          btn.disabled = true;
+          btn.textContent = '刪除中...';
+          isLoading = true;
+
+          const result = await window.dataSdk.delete(word);
+
+          isLoading = false;
+
+          if (!result.isOk) {
+            btn.disabled = false;
+            btn.textContent = '刪除';
+
+            const colors = getColors();
+            const baseSize = getFontSize();
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = `
+              position: fixed;
+              top: 2rem;
+              right: 2rem;
+              background-color: #fef2f2;
+              border: 2px solid #ef4444;
+              color: #991b1b;
+              padding: 1rem;
+              border-radius: 0.5rem;
+              font-size: ${baseSize}px;
+              z-index: 1000;
+            `;
+            errorDiv.textContent = '刪除失敗，請稍後再試';
+            document.body.appendChild(errorDiv);
+
+            setTimeout(() => {
+              errorDiv.remove();
+            }, 3000);
+          }
+        });
+      });
+    }
+
+    function showFormMessage(message, isSuccess) {
+      const messageDiv = document.getElementById('form-message');
+      const colors = getColors();
+      const baseSize = getFontSize();
+
+      messageDiv.style.display = 'block';
+      messageDiv.style.backgroundColor = isSuccess ? '#f0fdf4' : '#fef2f2';
+      messageDiv.style.border = isSuccess ? `2px solid ${colors.accent}` : '2px solid #ef4444';
+      messageDiv.style.color = isSuccess ? '#166534' : '#991b1b';
+      messageDiv.style.fontSize = `${baseSize}px`;
+      messageDiv.textContent = message;
+    }
+
+    initializeSDKs();
+  </script>
+</body>
+</html>
