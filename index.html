@@ -1270,13 +1270,9 @@
                 </div>
 
                 <style>
-.show-pinyin .pinyin-text {
-  display: inline !important;
-}
-.show-pinyin .empty-tip {
-  display: none;
-}
-               </style>
+                 .show-pinyin .pinyin-text {display: inline !important;}
+                 .show-pinyin .empty-tip {display: none;}
+                </style>
               </div>
 
               <form id="test-form">
@@ -1330,9 +1326,15 @@
                 <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
                   ${word.simplified}
                 </div>
-                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary};">
-                  ${word.pinyin}
+                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary}; cursor: pointer;"onclick="this.classList.toggle('show-pinyin')">
+                 <span style="display: none;" class="pinyin-text">${word.pinyin}</span>
+                 <span class="empty-tip">点击显示拼音</span>
                 </div>
+
+                <style>
+                 .show-pinyin .pinyin-text {display: inline !important;}
+                 .show-pinyin .empty-tip {display: none;}
+                </style>
               </div>
 
               <div style="margin-bottom: 1.5rem;">
@@ -1390,9 +1392,15 @@
                 <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${colors.text}; margin-bottom: 1rem;">
                   ${word.simplified}
                 </div>
-                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary};">
-                  ${word.pinyin}
+                <div style="font-size: ${baseSize * 1.3}px; color: ${colors.primary}; cursor: pointer;"onclick="this.classList.toggle('show-pinyin')">
+                 <span style="display: none;" class="pinyin-text">${word.pinyin}</span>
+                 <span class="empty-tip">点击显示拼音</span>
                 </div>
+
+                <style>
+                 .show-pinyin .pinyin-text {display: inline !important;}
+                 .show-pinyin .empty-tip {display: none;}
+                </style>
               </div>
 
               <div id="speed-choices-container" style="display: grid; gap: 1rem;">
