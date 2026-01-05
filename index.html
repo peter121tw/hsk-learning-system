@@ -532,8 +532,8 @@
       return wordsToSearch.filter(word => {
         if (word.simplified.includes(normalizedQuery)) return true;
         if (word.traditional.includes(normalizedQuery)) return true;
-        if (.toLowerCase().includes(normalizedQuery)) return true;
-        if (normalizePinyin().includes(queryWithoutTones)) return true;
+        if (word.pinyin.toLowerCase().includes(normalizedQuery)) return true;
+        if (normalizePinyin(word.pinyin).includes(queryWithoutTones)) return true;
         if (word.thai_meanings.toLowerCase().includes(normalizedQuery)) return true;
         return false;
       });
@@ -1028,7 +1028,7 @@
         html += '<button class="favorite-word-btn" data-id="' + word.id + '" style="background-color: ' + (isFav ? '#f59e0b' : colors.background) + '; color: ' + (isFav ? 'white' : colors.text) + '; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: 1px solid #f59e0b; cursor: pointer; font-size: ' + (baseSize * 0.8) + 'px;">' + (isFav ? '已收藏' : '收藏') + '</button>';
         html += '</div></div>';
         html += '<div style="margin-bottom: 1rem;">';
-        html += '<div style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.primary + '; margin-bottom: 0.5rem;">' +  + '</div>';
+        html += '<div style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.primary + '; margin-bottom: 0.5rem;">' + word.pinyin + '</div>';
         html += '<div style="font-size: ' + (baseSize * 0.85) + 'px; color: ' + colors.accent + '; font-weight: 600;">' + word.word_type + '</div>';
         html += '</div>';
         if (meanings.length > 0) {
@@ -1188,7 +1188,7 @@
         if (word.traditional && word.traditional !== word.simplified) {
           html += '<div style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.text + '; opacity: 0.7; margin-bottom: 0.15rem;">（' + word.traditional + '）</div>';
         }
-        html += '<div style="font-size: ' + (baseSize * 0.9) + 'px; color: ' + colors.primary + ';">' +  + '</div>';
+        html += '<div style="font-size: ' + (baseSize * 0.9) + 'px; color: ' + colors.primary + ';">' + word.pinyin + '</div>';
         html += '</div>';
         if (meanings.length > 0) {
           html += '<div style="margin-bottom: 0.5rem; width: 100%;">';
@@ -1242,19 +1242,20 @@
       html += '<div style="background-color: ' + colors.accent + '; color: white; padding: 0.4rem 0.8rem; border-radius: 1rem; font-size: ' + (baseSize * 0.9) + 'px; font-weight: 600;">' + word.word_type + '</div>';
       // 外层容器：保证和其他内容的间距，避免排版混乱
 html += '<div style="margin: 0.5rem 0;">';
-// 点击触发的文字（提示可点击，用主题强调色）
+// 点击触发的文字（移除了下划线，保留手型和主题色提示可点击）
 html += '  <span onclick="';
 // 点击事件逻辑：切换拼音的显示/隐藏，同时修改触发文字
 html += '    const pinyinDiv = this.nextElementSibling;';
 html += '    const isHidden = pinyinDiv.style.display === \'none\';';
 html += '    pinyinDiv.style.display = isHidden ? \'block\' : \'none\';';
 html += '    this.textContent = isHidden ? \'隐藏拼音\' : \'显示拼音\';';
-html += '" style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer; text-decoration: underline;">';
+html += '" style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer;">'; // 删掉了text-decoration: underline;
 html += '  显示拼音';
 html += '  </span>';
-// 拼音容器：默认隐藏，保留原有字体/颜色样式
-html += '  <div style="font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
+// 拼音容器：默认隐藏，保留原有样式 + 自定义拼音字体
+html += '  <div style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
 html += '</div>';
+      html += '<div style="background-color: ' + colors.accent + '; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; display: inline-block; margin-top: 0.5rem; font-size: ' + (baseSize * 0.9) + 'px;">' + word.word_type + '</div>';
       html += '</div>';
       html += '<form id="test-form">';
       html += '<div style="margin-bottom: 1.5rem;">';
@@ -1288,20 +1289,20 @@ html += '</div>';
       html += '<div style="text-align: center; margin-bottom: 3rem;">';
       html += '<div style="font-size: ' + (baseSize * 3) + 'px; font-weight: bold; color: ' + colors.text + '; margin-bottom: 1rem;">' + word.simplified + '</div>';
       html += '<div style="background-color: ' + colors.accent + '; color: white; padding: 0.4rem 0.8rem; border-radius: 1rem; font-size: ' + (baseSize * 0.9) + 'px; font-weight: 600;">' + word.word_type + '</div>';
-      // 外层容器：保证和其他内容的间距，避免排版混乱
+    // 外层容器：保证和其他内容的间距，避免排版混乱
 html += '<div style="margin: 0.5rem 0;">';
-// 点击触发的文字（提示可点击，用主题强调色）
+// 点击触发的文字（移除了下划线，保留手型和主题色提示可点击）
 html += '  <span onclick="';
 // 点击事件逻辑：切换拼音的显示/隐藏，同时修改触发文字
 html += '    const pinyinDiv = this.nextElementSibling;';
 html += '    const isHidden = pinyinDiv.style.display === \'none\';';
 html += '    pinyinDiv.style.display = isHidden ? \'block\' : \'none\';';
 html += '    this.textContent = isHidden ? \'隐藏拼音\' : \'显示拼音\';';
-html += '" style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer; text-decoration: underline;">';
+html += '" style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer;">'; // 删掉了text-decoration: underline;
 html += '  显示拼音';
 html += '  </span>';
-// 拼音容器：默认隐藏，保留原有字体/颜色样式
-html += '  <div style="font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
+// 拼音容器：默认隐藏，保留原有样式 + 自定义拼音字体
+html += '  <div style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
 html += '</div>';
       html += '</div>';
       html += '<div id="choices-container" style="display: grid; gap: 1rem;">';
@@ -1337,20 +1338,19 @@ html += '</div>';
       html += '<div style="background-color: ' + colors.accent + '; color: white; padding: 0.4rem 0.8rem; border-radius: 1rem; font-size: ' + (baseSize * 0.9) + 'px; font-weight: 600;">' + word.word_type + '</div>';
       // 外层容器：保证和其他内容的间距，避免排版混乱
 html += '<div style="margin: 0.5rem 0;">';
-// 点击触发的文字（提示可点击，用主题强调色）
+// 点击触发的文字（移除了下划线，保留手型和主题色提示可点击）
 html += '  <span onclick="';
 // 点击事件逻辑：切换拼音的显示/隐藏，同时修改触发文字
 html += '    const pinyinDiv = this.nextElementSibling;';
 html += '    const isHidden = pinyinDiv.style.display === \'none\';';
 html += '    pinyinDiv.style.display = isHidden ? \'block\' : \'none\';';
 html += '    this.textContent = isHidden ? \'隐藏拼音\' : \'显示拼音\';';
-html += '" style="font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer; text-decoration: underline;">';
+html += '" style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.1) + 'px; color: ' + colors.accent + '; cursor: pointer;">'; // 删掉了text-decoration: underline;
 html += '  显示拼音';
 html += '  </span>';
-// 拼音容器：默认隐藏，保留原有字体/颜色样式
-html += '  <div style="font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
+// 拼音容器：默认隐藏，保留原有样式 + 自定义拼音字体
+html += '  <div style="font-family: \'Noto Sans SC\', \'Microsoft YaHei\', 微软雅黑, 宋体, sans-serif; font-size: ' + (baseSize * 1.3) + 'px; color: ' + colors.primary + '; display: none; margin-top: 0.5rem;">' + word.pinyin + '</div>';
 html += '</div>';
-
       html += '</div>';
       html += '<div id="speed-choices-container" style="display: grid; gap: 1rem;">';
       gameOptions.forEach(function(option, index) {
