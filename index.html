@@ -1468,7 +1468,7 @@
 
       selectedWords.forEach(function(word) {
         const meanings = word.thai_meanings.split('|').map(m => m.trim());
-        pairs.push({ text: word.simplified, matchId: word.id, type: 'chinese' }({ text: word.word_type, matchId: word.id, type: 'chinese' });
+        pairs.push({ text: word.simplified, matchId: word.id, type: 'chinese' });
         pairs.push({ text: meanings[0], matchId: word.id, type: 'thai' });
       });
 
