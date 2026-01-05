@@ -126,7 +126,7 @@
     /* Login Modal Styles - Same.new inspired design */
     .login-overlay {
       position: fixed;
-      top: 0;
+      top: 0;Log
       left: 0;
       width: 100%;
       height: 100%;
@@ -299,12 +299,12 @@
     let showLoginHistory = false; // 顯示登入歷史彈窗
     let loginHistoryData = []; // 登入歷史資料
 
-   // ========== 新增：超時自動登出相關變量 ==========
+// ========== 新增：超時自動登出相關變量 ==========
 const AUTO_LOGOUT_TIMEOUT = 1800000; // 超時時間（毫秒），30分鐘=1800000ms，可自行調整
 let lastActivityTime = new Date(); // 記錄最後一次用戶活動時間
 let autoLogoutTimer = null; // 定時器ID
 // ===============================================
-   
+
     // 收藏生詞庫 (Favorites) - stored in localStorage
     let favoriteWords = JSON.parse(localStorage.getItem('hsk_favorites') || '[]');
 
@@ -316,24 +316,31 @@ let autoLogoutTimer = null; // 定時器ID
       currentUser = username;
       // 清除該用戶的失敗次數
       delete loginAttempts[username];
-    }
-   
-  // ========== 新增：登錄成功後啟動自動登出定時器 ==========
+
+       // ========== 新增：登錄成功後啟動自動登出定時器 ==========
   lastActivityTime = new Date(); // 初始化最後活動時間
   startAutoLogoutTimer();
   // =======================================================
-}   
-   
+
+    }
+
+
+
     // 登出函數
     function logout() {
       localStorage.removeItem('hsk_logged_in');
       localStorage.removeItem('hsk_current_user');
       isLoggedIn = false;
       currentUser = '';
+
+  // ========== 新增：清除自動登出定時器 ==========
+  clearAutoLogoutTimer();
+  // =============================================
+
       renderApp();
     }
-
-   // ========== 新增：超時自動登出核心函數 ==========
+    
+// ========== 新增：超時自動登出核心函數 ==========
 // 更新最後活動時間（用戶有操作時調用）
 function updateLastActivity() {
   lastActivityTime = new Date();
@@ -368,7 +375,7 @@ function clearAutoLogoutTimer() {
   }
 }
 // ===============================================
-   
+
     // 格式化日期時間
     function formatDateTime(date) {
       if (!date) return '';
@@ -649,6 +656,21 @@ function clearAutoLogoutTimer() {
       if (!dataResult.isOk) {
         console.error("Failed to initialize Data SDK");
       }
+
+      // ========== 新增：監聽用戶交互，更新最後活動時間 ==========
+  // 監聽點擊、滑鼠移動、鍵盤輸入等操作
+  const userEvents = ['click', 'mousemove', 'keydown', 'scroll', 'touchstart'];
+  userEvents.forEach(event => {
+    document.addEventListener(event, updateLastActivity);
+  });
+  // =======================================================
+
+  // 如果一開始就處於登入狀態，啟動定時器
+  if (isLoggedIn) {
+    lastActivityTime = new Date();
+    startAutoLogoutTimer();
+  }
+
     }
 
     function getColors() {
@@ -1147,7 +1169,7 @@ html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; mar
           html += '</button>';
         });
         html += '</div></div></div>';
-       html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 2rem; line-height: 1.5;">版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a></div>';
+        html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 2rem; line-height: 1.5;">版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a></div>';
         return html;
       }
 
@@ -1188,7 +1210,7 @@ html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; mar
           html += '</button>';
         });
         html += '</div>';
-       html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 2rem; line-height: 1.5;">版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a></div>';
+        html += '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 2rem; line-height: 1.5;">版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a></div>';
 
         // Word count selection modal
         if (showWordCountModal) {
