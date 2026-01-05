@@ -299,6 +299,12 @@
     let showLoginHistory = false; // 顯示登入歷史彈窗
     let loginHistoryData = []; // 登入歷史資料
 
+   // ========== 新增：超時自動登出相關變量 ==========
+const AUTO_LOGOUT_TIMEOUT = 1800000; // 超時時間（毫秒），30分鐘=1800000ms，可自行調整
+let lastActivityTime = new Date(); // 記錄最後一次用戶活動時間
+let autoLogoutTimer = null; // 定時器ID
+// ===============================================
+   
     // 收藏生詞庫 (Favorites) - stored in localStorage
     let favoriteWords = JSON.parse(localStorage.getItem('hsk_favorites') || '[]');
 
@@ -311,7 +317,13 @@
       // 清除該用戶的失敗次數
       delete loginAttempts[username];
     }
-
+   
+  // ========== 新增：登錄成功後啟動自動登出定時器 ==========
+  lastActivityTime = new Date(); // 初始化最後活動時間
+  startAutoLogoutTimer();
+  // =======================================================
+}   
+   
     // 登出函數
     function logout() {
       localStorage.removeItem('hsk_logged_in');
@@ -321,6 +333,42 @@
       renderApp();
     }
 
+   // ========== 新增：超時自動登出核心函數 ==========
+// 更新最後活動時間（用戶有操作時調用）
+function updateLastActivity() {
+  lastActivityTime = new Date();
+}
+
+// 檢查是否超時，超時則自動登出
+function checkAutoLogout() {
+  const now = new Date();
+  const timeDiff = now - lastActivityTime;
+
+  // 如果超時且處於登入狀態，執行登出
+  if (timeDiff > AUTO_LOGOUT_TIMEOUT && isLoggedIn) {
+    alert('由於長時間未操作，已自動登出'); // 可替換為自定義提示（比如彈窗）
+    logout(); // 調用現有登出函數
+    clearAutoLogoutTimer(); // 清除定時器
+  }
+}
+
+// 啟動自動登出定時器（每1分鐘檢查一次）
+function startAutoLogoutTimer() {
+  // 先清除舊的定時器，避免重複
+  clearAutoLogoutTimer();
+  // 每60秒檢查一次超時
+  autoLogoutTimer = setInterval(checkAutoLogout, 60000);
+}
+
+// 清除自動登出定時器
+function clearAutoLogoutTimer() {
+  if (autoLogoutTimer) {
+    clearInterval(autoLogoutTimer);
+    autoLogoutTimer = null;
+  }
+}
+// ===============================================
+   
     // 格式化日期時間
     function formatDateTime(date) {
       if (!date) return '';
