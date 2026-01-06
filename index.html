@@ -290,56 +290,56 @@
     let gameStartTime = null;
 
     // 登入狀態管理
-    let isLoggedIn = localStorage.getItem('hsk_logged_in') === 'true';
-    let currentUser = localStorage.getItem('hsk_current_user') || '';
-    let loginError = '';
-    let isLoggingIn = false;
-    let loginAttempts = {}; // 追蹤本地登入嘗試次數
-    let lockedAccounts = {}; // 追蹤被鎖定的帳號
-    let showLoginHistory = false; // 顯示登入歷史彈窗
-    let loginHistoryData = []; // 登入歷史資料
+let isLoggedIn = localStorage.getItem('hsk_logged_in') === 'true';
+let currentUser = localStorage.getItem('hsk_current_user') || '';
+let loginError = '';
+let isLoggingIn = false;
+let loginAttempts = {}; // 追蹤本地登入嘗試次數
+let lockedAccounts = {}; // 追蹤被鎖定的帳號
+let showLoginHistory = false; // 顯示登入歷史彈窗
+let loginHistoryData = []; // 登入歷史資料
 
 // ========== 新增：超時自動登出相關變量 ==========
 const AUTO_LOGOUT_TIMEOUT = 1800000; // 超時時間（毫秒），30分鐘=1800000ms，可自行調整
 let lastActivityTime = new Date(); // 記錄最後一次用戶活動時間
 let autoLogoutTimer = null; // 定時器ID
+// ========== 新增：頁面可見性相關變量 ==========
+let pageHiddenTime = null; // 記錄頁面被隱藏的時間
+const PAGE_INACTIVE_TIMEOUT = 1800000; // 頁面後台超時時間（30分鐘），可自行調整
 // ===============================================
 
-    // 收藏生詞庫 (Favorites) - stored in localStorage
-    let favoriteWords = JSON.parse(localStorage.getItem('hsk_favorites') || '[]');
+// 收藏生詞庫 (Favorites) - stored in localStorage
+let favoriteWords = JSON.parse(localStorage.getItem('hsk_favorites') || '[]');
 
-    // 登入函數
-    function login(username, password) {
-      localStorage.setItem('hsk_logged_in', 'true');
-      localStorage.setItem('hsk_current_user', username);
-      isLoggedIn = true;
-      currentUser = username;
-      // 清除該用戶的失敗次數
-      delete loginAttempts[username];
+// 登入函數
+function login(username, password) {
+  localStorage.setItem('hsk_logged_in', 'true');
+  localStorage.setItem('hsk_current_user', username);
+  isLoggedIn = true;
+  currentUser = username;
+  // 清除該用戶的失敗次數
+  delete loginAttempts[username];
 
-       // ========== 新增：登錄成功後啟動自動登出定時器 ==========
+  // ========== 新增：登錄成功後啟動自動登出定時器 ==========
   lastActivityTime = new Date(); // 初始化最後活動時間
   startAutoLogoutTimer();
   // =======================================================
+}
 
-    }
-
-
-
-    // 登出函數
-    function logout() {
-      localStorage.removeItem('hsk_logged_in');
-      localStorage.removeItem('hsk_current_user');
-      isLoggedIn = false;
-      currentUser = '';
+// 登出函數
+function logout() {
+  localStorage.removeItem('hsk_logged_in');
+  localStorage.removeItem('hsk_current_user');
+  isLoggedIn = false;
+  currentUser = '';
 
   // ========== 新增：清除自動登出定時器 ==========
   clearAutoLogoutTimer();
   // =============================================
 
-      renderApp();
-    }
-    
+  renderApp();
+}
+
 // ========== 新增：超時自動登出核心函數 ==========
 // 更新最後活動時間（用戶有操作時調用）
 function updateLastActivity() {
@@ -374,290 +374,323 @@ function clearAutoLogoutTimer() {
     autoLogoutTimer = null;
   }
 }
+
+// ========== 新增：頁面可見性檢測函數 ==========
+function handlePageVisibilityChange() {
+  // 頁面被隱藏（切換標籤、最小化窗口）
+  if (document.hidden) {
+    pageHiddenTime = new Date(); // 記錄隱藏時間
+    console.log('頁面進入後台，記錄時間:', pageHiddenTime);
+  } 
+  // 頁面重新可見
+  else {
+    if (pageHiddenTime && isLoggedIn) {
+      const now = new Date();
+      const hiddenDuration = now - pageHiddenTime;
+      
+      // 如果後台停留超過設定時間，自動登出
+      if (hiddenDuration > PAGE_INACTIVE_TIMEOUT) {
+        alert('由於頁面長時間在後台，已自動登出');
+        logout();
+      }
+    }
+    pageHiddenTime = null; // 重置隱藏時間
+    updateLastActivity(); // 更新最後活動時間
+  }
+}
+
+// ========== 新增：頁面關閉/刷新時清除登錄狀態 ==========
+function handlePageUnload() {
+  // 頁面關閉/刷新時，主動清除登錄狀態
+  if (isLoggedIn) {
+    localStorage.removeItem('hsk_logged_in');
+    localStorage.removeItem('hsk_current_user');
+  }
+}
 // ===============================================
 
-    // 格式化日期時間
-    function formatDateTime(date) {
-      if (!date) return '';
-      const d = new Date(date);
-      return d.getFullYear() + '-' +
-        String(d.getMonth() + 1).padStart(2, '0') + '-' +
-        String(d.getDate()).padStart(2, '0') + ' ' +
-        String(d.getHours()).padStart(2, '0') + ':' +
-        String(d.getMinutes()).padStart(2, '0');
-    }
+// 格式化日期時間
+function formatDateTime(date) {
+  if (!date) return '';
+  const d = new Date(date);
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0') + ' ' +
+    String(d.getHours()).padStart(2, '0') + ':' +
+    String(d.getMinutes()).padStart(2, '0');
+}
 
-    // 驗證用戶（從 Google Sheets 的 User 工作表驗證）
-    // ⚠️ 重要：用戶名和密碼必須與 Google Sheets 上的完全一致才能登入
-    // ⚠️ 不允許任何回退登入 - 必須從 Google Sheets 驗證
-    async function authenticateUser(username, password) {
-      const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
+// 驗證用戶（從 Google Sheets 的 User 工作表驗證）
+// ⚠️ 重要：用戶名和密碼必須與 Google Sheets 上的完全一致才能登入
+// ⚠️ 不允許任何回退登入 - 必須從 Google Sheets 驗證
+async function authenticateUser(username, password) {
+  const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
 
-      // 用戶名去除前後空白（確保精確匹配）
-      const trimmedUsername = username.trim();
+  // 用戶名去除前後空白（確保精確匹配）
+  const trimmedUsername = username.trim();
 
-      // 檢查本地是否已記錄鎖定
-      if (lockedAccounts[trimmedUsername]) {
-        return {
-          success: false,
-          message: '帳號已被鎖定',
-          locked: true,
-          lockTime: lockedAccounts[trimmedUsername]
-        };
-      }
+  // 檢查本地是否已記錄鎖定
+  if (lockedAccounts[trimmedUsername]) {
+    return {
+      success: false,
+      message: '帳號已被鎖定',
+      locked: true,
+      lockTime: lockedAccounts[trimmedUsername]
+    };
+  }
 
-      // ⚠️ 必須設置 API URL 才能登入
-      if (!apiUrl) {
-        return {
-          success: false,
-          message: '尚未設置 Google Sheets 連接\n請先點擊「設定」按鈕配置 API URL'
-        };
-      }
+  // ⚠️ 必須設置 API URL 才能登入
+  if (!apiUrl) {
+    return {
+      success: false,
+      message: '尚未設置 Google Sheets 連接\n請先點擊「設定」按鈕配置 API URL'
+    };
+  }
 
-      try {
-        console.log('🔐 正在驗證用戶:', trimmedUsername);
+  try {
+    console.log('🔐 正在驗證用戶:', trimmedUsername);
 
-        // 調用 Google Apps Script 驗證用戶
-        // ⚠️ 用戶名和密碼必須與 Google Sheets「User」工作表完全一致
-        const response = await fetch(apiUrl + '?action=verifyUser&username=' + encodeURIComponent(trimmedUsername) + '&password=' + encodeURIComponent(password), {
-          method: 'GET',
-          redirect: 'follow',
-          cache: 'no-cache'
-        });
+    // 調用 Google Apps Script 驗證用戶
+    // ⚠️ 用戶名和密碼必須與 Google Sheets「User」工作表完全一致
+    const response = await fetch(apiUrl + '?action=verifyUser&username=' + encodeURIComponent(trimmedUsername) + '&password=' + encodeURIComponent(password), {
+      method: 'GET',
+      redirect: 'follow',
+      cache: 'no-cache'
+    });
 
-        // 檢查回應狀態
-        if (!response.ok) {
-          console.error('API response not ok:', response.status);
-          return {
-            success: false,
-            message: 'API 連接失敗 (HTTP ' + response.status + ')\n請確認 Google Apps Script 已正確部署'
-          };
-        }
-
-        const result = await response.json();
-        console.log('🔐 驗證結果:', result);
-
-        // ⚠️ 嚴格檢查：必須是認證回應（有 authenticated 欄位），不能是資料回應
-        // 資料腳本會返回 { success: true, data: [...] }，這不是有效的認證回應
-        if (result.data !== undefined || result.authenticated === undefined) {
-          // 這是資料回應，不是認證回應 - 表示腳本未正確設置認證功能
-          console.error('❌ 收到資料回應而非認證回應，請確認 Google Apps Script 包含用戶驗證功能');
-          return {
-            success: false,
-            message: 'Google Apps Script 未正確設置\n\n請確認您的腳本包含用戶驗證功能（verifyUser action）\n\n請參考 AUTH_SETUP_GUIDE.md 設置認證腳本'
-          };
-        }
-
-        if (result.success && result.authenticated === true) {
-          // 登入成功 - 記錄登入歷史
-          recordLoginHistory(trimmedUsername, true);
-          return { success: true };
-        } else {
-          // 登入失敗
-          // 檢查是否被鎖定
-          if (result.locked) {
-            lockedAccounts[trimmedUsername] = result.lockTime;
-            return {
-              success: false,
-              message: '帳號已被鎖定於 ' + result.lockTime,
-              locked: true,
-              lockTime: result.lockTime
-            };
-          }
-
-          // 記錄失敗嘗試
-          recordLoginHistory(trimmedUsername, false);
-
-          return {
-            success: false,
-            message: result.message || '帳號或密碼錯誤\n⚠️ 請確認與 Google Sheets「User」工作表中的資料完全一致',
-            attemptsRemaining: result.attemptsRemaining
-          };
-        }
-      } catch (error) {
-        console.error('Authentication error:', error);
-
-        // ⚠️ API 調用失敗時，不允許登入（無回退機制）
-        return {
-          success: false,
-          message: '連線 Google Sheets 失敗\n\n可能原因：\n1. 網路連接問題\n2. Google Apps Script URL 錯誤\n3. 腳本未正確部署\n\n請檢查設定後重試'
-        };
-      }
-    }
-
-    // 記錄登入歷史到 Google Sheets
-    async function recordLoginHistory(username, success) {
-      const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
-      if (!apiUrl) return;
-
-      try {
-        await fetch(apiUrl + '?action=recordLoginHistory&username=' + encodeURIComponent(username) + '&success=' + success + '&timestamp=' + encodeURIComponent(new Date().toISOString()));
-      } catch (error) {
-        console.error('Failed to record login history:', error);
-      }
-    }
-
-    // 獲取登入歷史
-    async function fetchLoginHistory() {
-      const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
-      if (!apiUrl) {
-        loginHistoryData = [
-          { username: 'admin', success: true, timestamp: new Date().toISOString(), ip: '127.0.0.1' }
-        ];
-        return;
-      }
-
-      try {
-        const response = await fetch(apiUrl + '?action=getLoginHistory');
-        const result = await response.json();
-        if (result.success) {
-          loginHistoryData = result.history || [];
-        }
-      } catch (error) {
-        console.error('Failed to fetch login history:', error);
-        loginHistoryData = [];
-      }
-    }
-
-    // 保存收藏到 localStorage
-    function saveFavorites() {
-      localStorage.setItem('hsk_favorites', JSON.stringify(favoriteWords));
-    }
-
-    // 添加到收藏
-    function addToFavorites(wordId) {
-      if (!favoriteWords.includes(wordId)) {
-        favoriteWords.push(wordId);
-        saveFavorites();
-        return true;
-      }
-      return false;
-    }
-
-    // 從收藏移除
-    function removeFromFavorites(wordId) {
-      const index = favoriteWords.indexOf(wordId);
-      if (index > -1) {
-        favoriteWords.splice(index, 1);
-        saveFavorites();
-        return true;
-      }
-      return false;
-    }
-
-    // 檢查是否已收藏
-    function isFavorite(wordId) {
-      return favoriteWords.includes(wordId);
-    }
-
-    // 獲取收藏的生詞
-    function getFavoriteWords() {
-      return allWords.filter(w => favoriteWords.includes(w.id));
-    }
-
-    // 拼音轉英文字母（去除聲調）用於搜索
-    function normalizePinyin(pinyin) {
-      if (!pinyin) return '';
-      const toneMap = {
-        'ā': 'a', 'á': 'a', 'ǎ': 'a', 'à': 'a',
-        'ē': 'e', 'é': 'e', 'ě': 'e', 'è': 'e',
-        'ī': 'i', 'í': 'i', 'ǐ': 'i', 'ì': 'i',
-        'ō': 'o', 'ó': 'o', 'ǒ': 'o', 'ò': 'o',
-        'ū': 'u', 'ú': 'u', 'ǔ': 'u', 'ù': 'u',
-        'ǖ': 'v', 'ǘ': 'v', 'ǚ': 'v', 'ǜ': 'v', 'ü': 'v',
-        'ń': 'n', 'ň': 'n', 'ǹ': 'n'
+    // 檢查回應狀態
+    if (!response.ok) {
+      console.error('API response not ok:', response.status);
+      return {
+        success: false,
+        message: 'API 連接失敗 (HTTP ' + response.status + ')\n請確認 Google Apps Script 已正確部署'
       };
+    }
 
-      let result = pinyin.toLowerCase();
-      for (const [tone, base] of Object.entries(toneMap)) {
-        result = result.replace(new RegExp(tone, 'g'), base);
+    const result = await response.json();
+    console.log('🔐 驗證結果:', result);
+
+    // ⚠️ 嚴格檢查：必須是認證回應（有 authenticated 欄位），不能是資料回應
+    // 資料腳本會返回 { success: true, data: [...] }，這不是有效的認證回應
+    if (result.data !== undefined || result.authenticated === undefined) {
+      // 這是資料回應，不是認證回應 - 表示腳本未正確設置認證功能
+      console.error('❌ 收到資料回應而非認證回應，請確認 Google Apps Script 包含用戶驗證功能');
+      return {
+        success: false,
+        message: 'Google Apps Script 未正確設置\n\n請確認您的腳本包含用戶驗證功能（verifyUser action）\n\n請參考 AUTH_SETUP_GUIDE.md 設置認證腳本'
+      };
+    }
+
+    if (result.success && result.authenticated === true) {
+      // 登入成功 - 記錄登入歷史
+      recordLoginHistory(trimmedUsername, true);
+      return { success: true };
+    } else {
+      // 登入失敗
+      // 檢查是否被鎖定
+      if (result.locked) {
+        lockedAccounts[trimmedUsername] = result.lockTime;
+        return {
+          success: false,
+          message: '帳號已被鎖定於 ' + result.lockTime,
+          locked: true,
+          lockTime: result.lockTime
+        };
       }
-      result = result.replace(/[1-4]/g, '');
-      result = result.replace(/\s+/g, '');
-      return result;
+
+      // 記錄失敗嘗試
+      recordLoginHistory(trimmedUsername, false);
+
+      return {
+        success: false,
+        message: result.message || '帳號或密碼錯誤\n⚠️ 請確認與 Google Sheets「User」工作表中的資料完全一致',
+        attemptsRemaining: result.attemptsRemaining
+      };
     }
+  } catch (error) {
+    console.error('Authentication error:', error);
 
-    // 增強搜索功能
-    function searchWords(query, wordsToSearch) {
-      if (!query) return wordsToSearch;
-
-      const normalizedQuery = query.toLowerCase().trim();
-      const queryWithoutTones = normalizePinyin(normalizedQuery);
-
-      return wordsToSearch.filter(word => {
-        if (word.simplified.includes(normalizedQuery)) return true;
-        if (word.traditional.includes(normalizedQuery)) return true;
-        if (word.pinyin.toLowerCase().includes(normalizedQuery)) return true;
-        if (normalizePinyin(word.pinyin).includes(queryWithoutTones)) return true;
-        if (word.thai_meanings.toLowerCase().includes(normalizedQuery)) return true;
-        return false;
-      });
-    }
-
-    // 簡繁轉換對照表
-    const conversionMap = {
-      '学': '學', '习': '習', '国': '國', '这': '這', '那': '那',
-      '里': '裡', '说': '說', '话': '話', '吃': '吃', '饭': '飯',
-      '喝': '喝', '茶': '茶', '买': '買', '东': '東', '西': '西',
-      '门': '門', '开': '開', '关': '關', '书': '書', '看': '看',
-      '读': '讀', '写': '寫', '听': '聽', '会': '會', '见': '見',
-      '时': '時', '间': '間', '天': '天', '气': '氣', '候': '候'
+    // ⚠️ API 調用失敗時，不允許登入（無回退機制）
+    return {
+      success: false,
+      message: '連線 Google Sheets 失敗\n\n可能原因：\n1. 網路連接問題\n2. Google Apps Script URL 錯誤\n3. 腳本未正確部署\n\n請檢查設定後重試'
     };
+  }
+}
 
-    function convertToTraditional(text) {
-      let result = '';
-      for (let char of text) {
-        result += conversionMap[char] || char;
-      }
-      return result;
+// 記錄登入歷史到 Google Sheets
+async function recordLoginHistory(username, success) {
+  const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
+  if (!apiUrl) return;
+
+  try {
+    await fetch(apiUrl + '?action=recordLoginHistory&username=' + encodeURIComponent(username) + '&success=' + success + '&timestamp=' + encodeURIComponent(new Date().toISOString()));
+  } catch (error) {
+    console.error('Failed to record login history:', error);
+  }
+}
+
+// 獲取登入歷史
+async function fetchLoginHistory() {
+  const apiUrl = window.getGoogleScriptUrl ? window.getGoogleScriptUrl() : '';
+  if (!apiUrl) {
+    loginHistoryData = [
+      { username: 'admin', success: true, timestamp: new Date().toISOString(), ip: '127.0.0.1' }
+    ];
+    return;
+  }
+
+  try {
+    const response = await fetch(apiUrl + '?action=getLoginHistory');
+    const result = await response.json();
+    if (result.success) {
+      loginHistoryData = result.history || [];
     }
+  } catch (error) {
+    console.error('Failed to fetch login history:', error);
+    loginHistoryData = [];
+  }
+}
 
-    const dataHandler = {
-      onDataChanged(data) {
-        allWords = data.sort((a, b) => a.hsk_level - b.hsk_level || a.simplified.localeCompare(b.simplified));
-        lastSyncTime = new Date();
-        if (!isLoading && currentView !== 'add') {
-          renderApp();
-        }
-      }
-    };
+// 保存收藏到 localStorage
+function saveFavorites() {
+  localStorage.setItem('hsk_favorites', JSON.stringify(favoriteWords));
+}
 
-    async function onConfigChange(config) {
-      const baseSize = config.font_size || defaultConfig.font_size;
-      const customFont = config.font_family || defaultConfig.font_family;
-      const baseFontStack = 'system-ui, -apple-system, sans-serif';
+// 添加到收藏
+function addToFavorites(wordId) {
+  if (!favoriteWords.includes(wordId)) {
+    favoriteWords.push(wordId);
+    saveFavorites();
+    return true;
+  }
+  return false;
+}
 
-      document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
-      document.body.style.fontFamily = customFont + ', ' + baseFontStack;
-      document.body.style.fontSize = baseSize + 'px';
-      document.body.style.color = config.text_color || defaultConfig.text_color;
+// 從收藏移除
+function removeFromFavorites(wordId) {
+  const index = favoriteWords.indexOf(wordId);
+  if (index > -1) {
+    favoriteWords.splice(index, 1);
+    saveFavorites();
+    return true;
+  }
+  return false;
+}
 
+// 檢查是否已收藏
+function isFavorite(wordId) {
+  return favoriteWords.includes(wordId);
+}
+
+// 獲取收藏的生詞
+function getFavoriteWords() {
+  return allWords.filter(w => favoriteWords.includes(w.id));
+}
+
+// 拼音轉英文字母（去除聲調）用於搜索
+function normalizePinyin(pinyin) {
+  if (!pinyin) return '';
+  const toneMap = {
+    'ā': 'a', 'á': 'a', 'ǎ': 'a', 'à': 'a',
+    'ē': 'e', 'é': 'e', 'ě': 'e', 'è': 'e',
+    'ī': 'i', 'í': 'i', 'ǐ': 'i', 'ì': 'i',
+    'ō': 'o', 'ó': 'o', 'ǒ': 'o', 'ò': 'o',
+    'ū': 'u', 'ú': 'u', 'ǔ': 'u', 'ù': 'u',
+    'ǖ': 'v', 'ǘ': 'v', 'ǚ': 'v', 'ǜ': 'v', 'ü': 'v',
+    'ń': 'n', 'ň': 'n', 'ǹ': 'n'
+  };
+
+  let result = pinyin.toLowerCase();
+  for (const [tone, base] of Object.entries(toneMap)) {
+    result = result.replace(new RegExp(tone, 'g'), base);
+  }
+  result = result.replace(/[1-4]/g, '');
+  result = result.replace(/\s+/g, '');
+  return result;
+}
+
+// 增強搜索功能
+function searchWords(query, wordsToSearch) {
+  if (!query) return wordsToSearch;
+
+  const normalizedQuery = query.toLowerCase().trim();
+  const queryWithoutTones = normalizePinyin(normalizedQuery);
+
+  return wordsToSearch.filter(word => {
+    if (word.simplified.includes(normalizedQuery)) return true;
+    if (word.traditional.includes(normalizedQuery)) return true;
+    if (word.pinyin.toLowerCase().includes(normalizedQuery)) return true;
+    if (normalizePinyin(word.pinyin).includes(queryWithoutTones)) return true;
+    if (word.thai_meanings.toLowerCase().includes(normalizedQuery)) return true;
+    return false;
+  });
+}
+
+// 簡繁轉換對照表
+const conversionMap = {
+  '学': '學', '习': '習', '国': '國', '这': '這', '那': '那',
+  '里': '裡', '说': '說', '话': '話', '吃': '吃', '饭': '飯',
+  '喝': '喝', '茶': '茶', '买': '買', '东': '東', '西': '西',
+  '门': '門', '开': '開', '关': '關', '书': '書', '看': '看',
+  '读': '讀', '写': '寫', '听': '聽', '会': '會', '见': '見',
+  '时': '時', '间': '間', '天': '天', '气': '氣', '候': '候'
+};
+
+function convertToTraditional(text) {
+  let result = '';
+  for (let char of text) {
+    result += conversionMap[char] || char;
+  }
+  return result;
+}
+
+const dataHandler = {
+  onDataChanged(data) {
+    allWords = data.sort((a, b) => a.hsk_level - b.hsk_level || a.simplified.localeCompare(b.simplified));
+    lastSyncTime = new Date();
+    if (!isLoading && currentView !== 'add') {
       renderApp();
     }
+  }
+};
 
-    async function initializeSDKs() {
-      const elementResult = await window.elementSdk.init({
-        defaultConfig,
-        onConfigChange,
-        mapToCapabilities: (config) => ({
-          recolorables: [],
-          borderables: [],
-          fontEditable: null,
-          fontSizeable: null
-        }),
-        mapToEditPanelValues: (config) => new Map([
-          ["site_title", config.site_title || defaultConfig.site_title],
-          ["search_placeholder", config.search_placeholder || defaultConfig.search_placeholder]
-        ])
-      });
+async function onConfigChange(config) {
+  const baseSize = config.font_size || defaultConfig.font_size;
+  const customFont = config.font_family || defaultConfig.font_family;
+  const baseFontStack = 'system-ui, -apple-system, sans-serif';
 
-      const dataResult = await window.dataSdk.init(dataHandler);
+  document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+  document.body.style.fontFamily = customFont + ', ' + baseFontStack;
+  document.body.style.fontSize = baseSize + 'px';
+  document.body.style.color = config.text_color || defaultConfig.text_color;
 
-      if (!dataResult.isOk) {
-        console.error("Failed to initialize Data SDK");
-      }
+  renderApp();
+}
 
-      // ========== 新增：監聽用戶交互，更新最後活動時間 ==========
+async function initializeSDKs() {
+  const elementResult = await window.elementSdk.init({
+    defaultConfig,
+    onConfigChange,
+    mapToCapabilities: (config) => ({
+      recolorables: [],
+      borderables: [],
+      fontEditable: null,
+      fontSizeable: null
+    }),
+    mapToEditPanelValues: (config) => new Map([
+      ["site_title", config.site_title || defaultConfig.site_title],
+      ["search_placeholder", config.search_placeholder || defaultConfig.search_placeholder]
+    ])
+  });
+
+  const dataResult = await window.dataSdk.init(dataHandler);
+
+  if (!dataResult.isOk) {
+    console.error("Failed to initialize Data SDK");
+  }
+
+  // ========== 新增：監聽用戶交互，更新最後活動時間 ==========
   // 監聽點擊、滑鼠移動、鍵盤輸入等操作
   const userEvents = ['click', 'mousemove', 'keydown', 'scroll', 'touchstart'];
   userEvents.forEach(event => {
@@ -665,197 +698,203 @@ function clearAutoLogoutTimer() {
   });
   // =======================================================
 
+  // ========== 新增：註冊頁面可見性和關閉監聽 ==========
+  // 監聽頁面可見性變化（切換標籤、最小化窗口）
+  document.addEventListener('visibilitychange', handlePageVisibilityChange);
+  // 監聽頁面關閉/刷新事件
+  window.addEventListener('beforeunload', handlePageUnload);
+  // =======================================================
+
   // 如果一開始就處於登入狀態，啟動定時器
   if (isLoggedIn) {
     lastActivityTime = new Date();
     startAutoLogoutTimer();
   }
+}
 
-    }
+function getColors() {
+  const config = window.elementSdk?.config || defaultConfig;
+  return {
+    background: config.background_color || defaultConfig.background_color,
+    card: config.card_color || defaultConfig.card_color,
+    primary: config.primary_color || defaultConfig.primary_color,
+    text: config.text_color || defaultConfig.text_color,
+    accent: config.accent_color || defaultConfig.accent_color
+  };
+}
 
-    function getColors() {
-      const config = window.elementSdk?.config || defaultConfig;
-      return {
-        background: config.background_color || defaultConfig.background_color,
-        card: config.card_color || defaultConfig.card_color,
-        primary: config.primary_color || defaultConfig.primary_color,
-        text: config.text_color || defaultConfig.text_color,
-        accent: config.accent_color || defaultConfig.accent_color
-      };
-    }
+function getFontSize() {
+  const config = window.elementSdk?.config || defaultConfig;
+  return config.font_size || defaultConfig.font_size;
+}
 
-    function getFontSize() {
-      const config = window.elementSdk?.config || defaultConfig;
-      return config.font_size || defaultConfig.font_size;
-    }
+function formatSyncTime() {
+  if (!lastSyncTime) return '尚未同步';
+  const now = new Date();
+  const diff = Math.floor((now - lastSyncTime) / 1000);
 
-    function formatSyncTime() {
-      if (!lastSyncTime) return '尚未同步';
-      const now = new Date();
-      const diff = Math.floor((now - lastSyncTime) / 1000);
+  if (diff < 5) return '剛剛';
+  if (diff < 60) return diff + ' 秒前';
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分鐘前';
+  return lastSyncTime.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+}
 
-      if (diff < 5) return '剛剛';
-      if (diff < 60) return diff + ' 秒前';
-      if (diff < 3600) return Math.floor(diff / 60) + ' 分鐘前';
-      return lastSyncTime.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
-    }
+// 登入彈窗渲染
+function renderLoginModal() {
+  // 檢查是否有被鎖定的帳號訊息
+  let lockWarningHtml = '';
+  const lastAttemptedUser = localStorage.getItem('hsk_last_attempted_user') || '';
+  if (lastAttemptedUser && lockedAccounts[lastAttemptedUser]) {
+    lockWarningHtml = '<div style="background-color: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.813rem; text-align: center;">' +
+      '<div style="font-weight: 600; margin-bottom: 0.25rem;">🔒 帳號已被鎖定</div>' +
+      '<div>鎖定於：' + lockedAccounts[lastAttemptedUser] + '</div>' +
+      '<div style="font-size: 0.75rem; margin-top: 0.25rem; opacity: 0.8;">請聯繫管理員解鎖</div>' +
+    '</div>';
+  }
 
-    // 登入彈窗渲染
-    function renderLoginModal() {
-      // 檢查是否有被鎖定的帳號訊息
-      let lockWarningHtml = '';
-      const lastAttemptedUser = localStorage.getItem('hsk_last_attempted_user') || '';
-      if (lastAttemptedUser && lockedAccounts[lastAttemptedUser]) {
-        lockWarningHtml = '<div style="background-color: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.813rem; text-align: center;">' +
-          '<div style="font-weight: 600; margin-bottom: 0.25rem;">🔒 帳號已被鎖定</div>' +
-          '<div>鎖定於：' + lockedAccounts[lastAttemptedUser] + '</div>' +
-          '<div style="font-size: 0.75rem; margin-top: 0.25rem; opacity: 0.8;">請聯繫管理員解鎖</div>' +
-        '</div>';
-      }
-
-      return '<div class="login-overlay" id="login-overlay">' +
-          '<div class="login-modal">' +
-            '<div style="display: flex; flex-direction: column; gap: 1.5rem;">' +
-              '<div style="display: flex; justify-content: center;">' +
-                '<img src="/hsk-learning-system/logo.png" alt="HSK Logo" style="width: 80px; height: 80px; object-fit: contain; border-radius: 50%;" onerror="this.style.display=\'none\'">' +
-              '</div>' +
-              '<h1 style="text-align: center; font-size: 1.25rem; font-weight: 600; color: #1f2937; margin: 0;">' +
-                '請登入以繼續使用' +
-              '</h1>' +
-              lockWarningHtml +
-              '<form id="login-form" style="display: flex; flex-direction: column; gap: 1rem;">' +
-                '<div>' +
-                  '<label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">' +
-                    '用戶名' +
-                  '</label>' +
-                  '<input type="text" id="login-username" class="login-input" placeholder="請輸入用戶名" required autocomplete="username">' +
-                '</div>' +
-                '<div>' +
-                  '<label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">' +
-                    '密碼' +
-                  '</label>' +
-                  '<input type="password" id="login-password" class="login-input" placeholder="請輸入密碼" required autocomplete="current-password">' +
-                '</div>' +
-                (loginError ? '<div class="login-error">' + loginError + '</div>' : '') +
-                '<button type="submit" id="login-submit-btn" class="login-btn login-btn-primary" ' + (isLoggingIn ? 'disabled' : '') + '>' +
-                  (isLoggingIn ? '登入中...' : '登入') +
-                '</button>' +
-              '</form>' +
-              '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af;">' +
-                '版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a><br><span style="color: #ef4444;">⚠️ 用戶名和密碼必須與完全一致</span>' +
-              '</div>' +
+  return '<div class="login-overlay" id="login-overlay">' +
+      '<div class="login-modal">' +
+        '<div style="display: flex; flex-direction: column; gap: 1.5rem;">' +
+          '<div style="display: flex; justify-content: center;">' +
+            '<img src="/hsk-learning-system/logo.png" alt="HSK Logo" style="width: 80px; height: 80px; object-fit: contain; border-radius: 50%;" onerror="this.style.display=\'none\'">' +
+          '</div>' +
+          '<h1 style="text-align: center; font-size: 1.25rem; font-weight: 600; color: #1f2937; margin: 0;">' +
+            '請登入以繼續使用' +
+          '</h1>' +
+          lockWarningHtml +
+          '<form id="login-form" style="display: flex; flex-direction: column; gap: 1rem;">' +
+            '<div>' +
+              '<label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">' +
+                '用戶名' +
+              '</label>' +
+              '<input type="text" id="login-username" class="login-input" placeholder="請輸入用戶名" required autocomplete="username">' +
             '</div>' +
+            '<div>' +
+              '<label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">' +
+                '密碼' +
+              '</label>' +
+              '<input type="password" id="login-password" class="login-input" placeholder="請輸入密碼" required autocomplete="current-password">' +
+            '</div>' +
+            (loginError ? '<div class="login-error">' + loginError + '</div>' : '') +
+            '<button type="submit" id="login-submit-btn" class="login-btn login-btn-primary" ' + (isLoggingIn ? 'disabled' : '') + '>' +
+              (isLoggingIn ? '登入中...' : '登入') +
+            '</button>' +
+          '</form>' +
+          '<div style="text-align: center; font-size: 0.75rem; color: #9ca3af;">' +
+            '版權聲明 Copyright ©2010 Shihua Chinese Language School 狮华华语学校<br><a href="https://www.facebook.com/SHChineseLanguageSchool">https://www.facebook.com/SHChineseLanguageSchool</a><br><span style="color: #ef4444;">⚠️ 用戶名和密碼必須與完全一致</span>' +
           '</div>' +
-        '</div>';
-    }
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
 
-    function renderSyncIndicator(colors, baseSize) {
-      const hasUrl = window.getGoogleScriptUrl && window.getGoogleScriptUrl();
-      return '<div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background-color: ' + colors.card + '; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">' +
-          '<div class="sync-indicator" style="width: 8px; height: 8px; background-color: ' + (hasUrl ? colors.accent : '#ef4444') + '; border-radius: 50%;"></div>' +
-          '<div style="font-size: ' + (baseSize * 0.85) + 'px; color: ' + colors.text + '; flex: 1;">' +
-            '<span style="font-weight: 600;">' + (hasUrl ? 'Google Sheets 已連結' : 'Google Sheets 未連結') + '</span>' +
-            '<span class="sync-time" style="opacity: 0.6; margin-left: 0.5rem;">' + (hasUrl ? '最後同步：' + formatSyncTime() : '') + '</span>' +
-          '</div>' +
-          '<button id="settings-btn" style="background-color: ' + colors.primary + '; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ' + (baseSize * 0.8) + 'px;">' +
-            '⚙️ 設定' +
-          '</button>' +
-        '</div>';
-    }
+function renderSyncIndicator(colors, baseSize) {
+  const hasUrl = window.getGoogleScriptUrl && window.getGoogleScriptUrl();
+  return '<div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background-color: ' + colors.card + '; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">' +
+      '<div class="sync-indicator" style="width: 8px; height: 8px; background-color: ' + (hasUrl ? colors.accent : '#ef4444') + '; border-radius: 50%;"></div>' +
+      '<div style="font-size: ' + (baseSize * 0.85) + 'px; color: ' + colors.text + '; flex: 1;">' +
+        '<span style="font-weight: 600;">' + (hasUrl ? 'Google Sheets 已連結' : 'Google Sheets 未連結') + '</span>' +
+        '<span class="sync-time" style="opacity: 0.6; margin-left: 0.5rem;">' + (hasUrl ? '最後同步：' + formatSyncTime() : '') + '</span>' +
+      '</div>' +
+      '<button id="settings-btn" style="background-color: ' + colors.primary + '; color: white; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: ' + (baseSize * 0.8) + 'px;">' +
+        '⚙️ 設定' +
+      '</button>' +
+    '</div>';
+}
 
-    function renderApp() {
-      const app = document.getElementById('app');
-      const colors = getColors();
-      const baseSize = getFontSize();
-      const config = window.elementSdk?.config || defaultConfig;
+function renderApp() {
+  const app = document.getElementById('app');
+  const colors = getColors();
+  const baseSize = getFontSize();
+  const config = window.elementSdk?.config || defaultConfig;
 
-      // 登入檢查
-      if (!isLoggedIn) {
-        app.innerHTML = renderLoginModal();
-        attachLoginListeners();
+  // 登入檢查
+  if (!isLoggedIn) {
+    app.innerHTML = renderLoginModal();
+    attachLoginListeners();
+    return;
+  }
+
+  if (currentView === 'home') {
+    app.innerHTML = renderHome(colors, baseSize, config);
+  } else if (currentView === 'browse') {
+    app.innerHTML = renderBrowse(colors, baseSize, config);
+  } else if (currentView === 'favorites') {
+    app.innerHTML = renderFavorites(colors, baseSize, config);
+  } else if (currentView === 'study') {
+    app.innerHTML = renderStudy(colors, baseSize, config);
+  } else if (currentView === 'test') {
+    app.innerHTML = renderTest(colors, baseSize, config);
+  } else if (currentView === 'multiple-choice') {
+    app.innerHTML = renderMultipleChoice(colors, baseSize, config);
+  } else if (currentView === 'speed-challenge') {
+    app.innerHTML = renderSpeedChallenge(colors, baseSize, config);
+  } else if (currentView === 'matching') {
+    app.innerHTML = renderMatching(colors, baseSize, config);
+  } else if (currentView === 'listening') {
+    app.innerHTML = renderListening(colors, baseSize, config);
+  } else if (currentView === 'results') {
+    app.innerHTML = renderResults(colors, baseSize, config);
+  }
+
+  attachEventListeners();
+}
+
+// 登入表單監聽
+function attachLoginListeners() {
+  const loginForm = document.getElementById('login-form');
+  const usernameInput = document.getElementById('login-username');
+
+  // 預填上次嘗試的用戶名
+  const lastAttemptedUser = localStorage.getItem('hsk_last_attempted_user') || '';
+  if (usernameInput && lastAttemptedUser) {
+    usernameInput.value = lastAttemptedUser;
+  }
+
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      // 確保用戶名和密碼完全匹配（移除前後空白，但保留中間空格）
+      const username = usernameInput.value.trim();
+      const password = document.getElementById('login-password').value;
+
+      // 儲存嘗試的用戶名
+      localStorage.setItem('hsk_last_attempted_user', username);
+
+      // 檢查是否已被鎖定
+      if (lockedAccounts[username]) {
+        loginError = '帳號已被鎖定於 ' + lockedAccounts[username] + '，請聯繫管理員';
+        renderApp();
         return;
       }
 
-      if (currentView === 'home') {
-        app.innerHTML = renderHome(colors, baseSize, config);
-      } else if (currentView === 'browse') {
-        app.innerHTML = renderBrowse(colors, baseSize, config);
-      } else if (currentView === 'favorites') {
-        app.innerHTML = renderFavorites(colors, baseSize, config);
-      } else if (currentView === 'study') {
-        app.innerHTML = renderStudy(colors, baseSize, config);
-      } else if (currentView === 'test') {
-        app.innerHTML = renderTest(colors, baseSize, config);
-      } else if (currentView === 'multiple-choice') {
-        app.innerHTML = renderMultipleChoice(colors, baseSize, config);
-      } else if (currentView === 'speed-challenge') {
-        app.innerHTML = renderSpeedChallenge(colors, baseSize, config);
-      } else if (currentView === 'matching') {
-        app.innerHTML = renderMatching(colors, baseSize, config);
-      } else if (currentView === 'listening') {
-        app.innerHTML = renderListening(colors, baseSize, config);
-      } else if (currentView === 'results') {
-        app.innerHTML = renderResults(colors, baseSize, config);
+      isLoggingIn = true;
+      loginError = '';
+      renderApp();
+
+      const result = await authenticateUser(username, password);
+
+      isLoggingIn = false;
+
+      if (result.success) {
+        // 清除嘗試記錄
+        localStorage.removeItem('hsk_last_attempted_user');
+        login(username, password);
+        loginError = '';
+        renderApp();
+      } else {
+        // 處理鎖定狀態
+        if (result.locked) {
+          lockedAccounts[username] = result.lockTime;
+          loginError = '帳號已被鎖定於 ' + result.lockTime;
+        } else {
+          loginError = result.message || '登入失敗，請檢查帳號密碼';
+        }
+        renderApp();
       }
-
-      attachEventListeners();
-    }
-
-    // 登入表單監聽
-    function attachLoginListeners() {
-      const loginForm = document.getElementById('login-form');
-      const usernameInput = document.getElementById('login-username');
-
-      // 預填上次嘗試的用戶名
-      const lastAttemptedUser = localStorage.getItem('hsk_last_attempted_user') || '';
-      if (usernameInput && lastAttemptedUser) {
-        usernameInput.value = lastAttemptedUser;
-      }
-
-      if (loginForm) {
-        loginForm.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          // 確保用戶名和密碼完全匹配（移除前後空白，但保留中間空格）
-          const username = usernameInput.value.trim();
-          const password = document.getElementById('login-password').value;
-
-          // 儲存嘗試的用戶名
-          localStorage.setItem('hsk_last_attempted_user', username);
-
-          // 檢查是否已被鎖定
-          if (lockedAccounts[username]) {
-            loginError = '帳號已被鎖定於 ' + lockedAccounts[username] + '，請聯繫管理員';
-            renderApp();
-            return;
-          }
-
-          isLoggingIn = true;
-          loginError = '';
-          renderApp();
-
-          const result = await authenticateUser(username, password);
-
-          isLoggingIn = false;
-
-          if (result.success) {
-            // 清除嘗試記錄
-            localStorage.removeItem('hsk_last_attempted_user');
-            login(username, password);
-            loginError = '';
-            renderApp();
-          } else {
-            // 處理鎖定狀態
-            if (result.locked) {
-              lockedAccounts[username] = result.lockTime;
-              loginError = '帳號已被鎖定於 ' + result.lockTime;
-            } else {
-              loginError = result.message || '登入失敗，請檢查帳號密碼';
-            }
-            renderApp();
-          }
-        });
-      }
-    }
+    });
+  }
+}
 
     function renderHome(colors, baseSize, config) {
       const levelCounts = Array(9).fill(0);
